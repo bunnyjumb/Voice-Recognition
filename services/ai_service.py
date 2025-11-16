@@ -390,7 +390,16 @@ class AIService:
                         
                         if hasattr(transcript_response, 'text') and transcript_response.text:
                             logger.info(f"[API] API transcription successful in {api_duration:.2f} seconds")
-                            return transcript_response.text
+                            # Normalize text to fix capitalization issues
+                            transcript = transcript_response.text
+                            try:
+                                from utils.text_normalizer import TextNormalizer
+                                normalizer = TextNormalizer()
+                                transcript = normalizer.normalize(transcript, language=language)
+                                logger.debug("[API] Applied text normalization")
+                            except Exception as e:
+                                logger.warning(f"[API] Text normalization failed: {e}")
+                            return transcript
                         else:
                             raise RuntimeError("API returned empty transcript")
                             
@@ -653,6 +662,17 @@ class AIService:
                     "Local Whisper transcription returned empty result. "
                     "Please ensure your audio file contains clear speech."
                 )
+            
+            # Normalize text for all languages (fix capitalization issues)
+            logger.info("[LOCAL WHISPER] Normalizing text (fixing capitalization)...")
+            try:
+                from utils.text_normalizer import TextNormalizer
+                normalizer = TextNormalizer()
+                transcript = normalizer.normalize(transcript, language=language)
+                logger.info("[LOCAL WHISPER] Applied text normalization")
+            except Exception as e:
+                logger.warning(f"[LOCAL WHISPER] Text normalization failed: {e}")
+                # Continue with original transcript if normalization fails
             
             # Post-process transcript for Vietnamese to improve accuracy
             if language == 'vi':

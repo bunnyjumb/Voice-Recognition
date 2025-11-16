@@ -22,12 +22,16 @@ Python/
 │   ├── ai_service.py              # AI transcription & summarization
 │   └── whisper_model_cache.py     # Cache Whisper models để tối ưu performance
 ├── utils/
-│   ├── prompt_builder.py          # Tạo prompts cho AI
+│   ├── prompt_builder.py          # Tạo prompts cho AI (well-crafted templates)
 │   ├── text_chunker.py            # Chia nhỏ text dài
+│   ├── text_normalizer.py         # Normalize text (fix capitalization)
 │   ├── vietnamese_postprocessor.py # Post-processing cho tiếng Việt
-│   ├── message_manager.py         # Quản lý conversation history
-│   ├── function_calling.py        # Function calling cho OpenAI
+│   ├── message_manager.py         # Quản lý conversation history (multi-turn dialogue)
+│   ├── function_calling.py        # Function calling cho OpenAI (mock data schema)
 │   └── batch_processor.py         # Batch processing
+├── services/
+│   ├── file_cleanup_service.py    # Tự động dọn dẹp file cũ
+│   └── validation_service.py     # Validation logic tập trung
 └── uploads/                       # Thư mục lưu files
 ```
 
@@ -98,7 +102,38 @@ Python/
 - `get_file_path(filename)`: Lấy full path của file
 - `file_exists(filename)`: Kiểm tra file có tồn tại không
 
-### 4. AI Service (ai_service.py)
+### 4. Validation Service (validation_service.py)
+
+**Class: ValidationService**
+
+**Chức năng:**
+- Tập trung validation logic
+- Validate audio request (file + form data)
+- Provide clear error messages
+- Tuân thủ Single Responsibility Principle
+
+**Methods:**
+- `validate_audio_request(form_data, files)`: Validate toàn bộ request
+- `validate_language_code(language)`: Validate language code
+- `get_validation_error_message(field)`: Get user-friendly error messages
+
+### 5. File Cleanup Service (file_cleanup_service.py)
+
+**Class: FileCleanupService**
+
+**Chức năng:**
+- Tự động dọn dẹp file cũ (>1 ngày)
+- Cleanup temp files (compressed, chunks)
+- Configurable retention period
+- Storage statistics
+
+**Methods:**
+- `cleanup_old_files(dry_run)`: Xóa file cũ
+- `cleanup_temp_files(file_paths)`: Xóa temp files
+- `cleanup_temp_directories(directory_paths)`: Xóa temp directories
+- `get_storage_stats()`: Thống kê storage usage
+
+### 6. AI Service (ai_service.py)
 
 **Class: AIService**
 
@@ -139,12 +174,18 @@ Python/
      - Other languages: "base" (balance speed/accuracy)
    - Models chỉ load 1 lần, reuse cho các requests sau
    - Transcribe với language hint
-   - Post-processing cho tiếng Việt (nếu cần)
 
-6. **Post-processing (Vietnamese only)**
+6. **Text Normalization (All Languages)**
+   - Fix capitalization issues (all caps → proper case)
+   - Fix sentence capitalization
+   - Normalize whitespace và punctuation
+   - Áp dụng cho cả API và Local Whisper results
+
+7. **Post-processing (Vietnamese only)**
    - Sửa lỗi chính tả phổ biến
    - Chuẩn hóa định dạng
    - Cải thiện chất lượng text
+   - Chỉ áp dụng sau khi normalize text
 
 **Method: `_transcribe_single_file(audio_file_path, language)`**
 
@@ -161,26 +202,28 @@ Python/
 - Post-process nếu là tiếng Việt
 - Return transcript
 
-#### 4.2 Summarization Workflow
+#### 6.2 Summarization Workflow (Chat Completion Implementation)
 
 **Method: `summarize_transcript(transcript, topic, language, custom_language)`**
 
-**Quy trình:**
+**Quy trình (Implementing Chat Completion):**
 
 1. **Kiểm tra độ dài transcript**
    - Nếu ≤ 2000 chars: Summarize trực tiếp
    - Nếu > 2000 chars: Chunked summarization
 
 2. **Single Chunk Summarization**
-   - Tạo prompt từ PromptBuilder
-   - Gọi OpenAI API với GPT model
+   - Tạo **well-crafted prompts** từ PromptBuilder
+   - System message: Định nghĩa role và behavior của AI
+   - User prompt: Context-aware với meeting topic
+   - **Chat Completion API call** với structured messages
    - Return summary
 
 3. **Chunked Summarization**
    - Chia transcript thành chunks (2000 chars/chunk, overlap 200)
-   - Summarize từng chunk
+   - Summarize từng chunk với **chat completion**
    - Combine chunk summaries
-   - Tạo final summary từ combined summaries
+   - Tạo final summary từ combined summaries với **multi-turn context**
 
 **Method: `_summarize_single_chunk(...)`**
 - Summarize một chunk text
@@ -208,35 +251,61 @@ Python/
 ### 6. Utility Modules
 
 #### PromptBuilder (prompt_builder.py)
-- Tạo prompts cho AI summarization
-- Support multiple languages
+- **Well-crafted prompt templates** cho AI summarization
+- Support multiple languages với language-aware prompts
 - Structured và standard prompts
-- Preserve technical terms
+- Preserve technical terms và proper nouns
+- Context-aware prompts với meeting topic
+- System message và user prompt separation
+- Optimized cho OpenAI Chat Completion API
 
 #### TextChunker (text_chunker.py)
 - Chia text dài thành chunks
 - Intelligent splitting (sentence boundaries)
 - Overlap để preserve context
 
+#### TextNormalizer (text_normalizer.py)
+- Normalize text cho tất cả ngôn ngữ
+- Fix capitalization issues (all caps → proper case)
+- Fix sentence capitalization
+- Normalize whitespace và punctuation
+- Áp dụng cho cả API và Local Whisper transcription
+
 #### VietnamesePostProcessor (vietnamese_postprocessor.py)
 - Sửa lỗi chính tả tiếng Việt
 - Chuẩn hóa định dạng
 - Cải thiện transcription quality
+- Chỉ áp dụng sau khi normalize text
 
 #### MessageManager (message_manager.py)
-- Quản lý conversation history
-- Multi-turn dialogue support
-- Context preservation
+- **Message management** cho conversation history
+- **Multi-turn dialogue support** với context preservation
+- Message roles: system, user, assistant, function
+- History trimming để giữ context trong giới hạn
+- Timestamp tracking cho messages
+- API-ready message format conversion
+- Conversation summary và statistics
 
 #### FunctionRegistry (function_calling.py)
-- Function calling cho OpenAI
-- Mock data schema
-- Function definitions
+- Function calling cho OpenAI API
+- Mock data schema cho meeting summaries
+- Function definitions với JSON Schema
+- Dynamic function registration và execution
+- Support cho structured output
+
+**Mock Data Schema:**
+- Meeting summary structure với topic, date, participants
+- Key points, decisions, action items
+- Next steps và follow-up items
+- Structured format cho consistent output
 
 #### BatchProcessor (batch_processor.py)
-- Batch processing nhiều requests
-- Thread pool execution
-- Timeout handling
+- **Batch processing** nhiều requests
+- Thread pool execution với configurable workers
+- Timeout handling cho mỗi request
+- Request queuing và batching
+- Callback support cho async processing
+- Error handling và result aggregation
 
 #### WhisperModelCache (whisper_model_cache.py)
 - Singleton cache cho Whisper models
@@ -362,9 +431,35 @@ POST /process-audio
 [Frontend Display]
 ```
 
+## Code Architecture & SOLID Principles
+
+### Service Layer Architecture
+- **Single Responsibility**: Mỗi service có một trách nhiệm rõ ràng
+  - `AudioService`: Quản lý file audio
+  - `AIService`: Xử lý transcription và summarization
+  - `ValidationService`: Validation logic
+  - `FileCleanupService`: Dọn dẹp file
+  - `FFmpegChecker`: Kiểm tra FFmpeg (singleton utility)
+
+### DRY (Don't Repeat Yourself)
+- **FFmpegChecker**: Centralized FFmpeg checking, loại bỏ code duplication
+- **TextNormalizer**: Normalize text cho tất cả ngôn ngữ
+- **ValidationService**: Tập trung validation logic
+
+### File Management
+- **Automatic Cleanup**: Files cũ (>1 ngày) được tự động xóa
+- **Temp File Cleanup**: Compressed files và chunks được cleanup sau khi xử lý
+- **Retention Period**: Có thể cấu hình (mặc định: 1 ngày)
+
+### Text Processing Pipeline
+1. **Transcription**: Audio → Text (API hoặc Local Whisper)
+2. **Text Normalization**: Fix capitalization issues (tất cả ngôn ngữ)
+3. **Language-specific Post-processing**: Vietnamese post-processing (nếu cần)
+4. **Summarization**: Text → Summary (với well-crafted prompts)
+
 ## Logging và Debugging
 
-App sử dụng Python `logging` module và `print()` statements. Các log points:
+App sử dụng Python `logging` module (đã thay thế tất cả `print()` statements). Các log points:
 - **Initialization**: Server start, service initialization, model preloading
 - **File Operations**: File save, file size, file path
 - **Transcription**: 
@@ -479,7 +574,7 @@ choco install ffmpeg
 
 ### Bước 1: Clone hoặc tải project
 ```bash
-cd C:\Users\PhamDucDuy        \Desktop\Python
+cd C:\Users\PhamDucDuy\Desktop\Python
 ```
 
 ### Bước 2: Tạo virtual environment (khuyến nghị)
@@ -617,7 +712,22 @@ pip install openai-whisper
 - Với file 6MB, có thể mất 8-10 phút
 - Check logs để xem progress: `[LOCAL WHISPER] Transcription started - processing audio...`
 - UI progress bar là simulated, không phản ánh thực tế
-- Đợi cho đến khi thấy log: `[LOCAL WHISPER] ✓ Transcription completed`
+- Đợi cho đến khi thấy log: `[LOCAL WHISPER] Transcription completed`
+
+### Text bị viết hoa toàn bộ hoặc sai capitalization
+**Giải pháp**:
+- Đã được fix bằng TextNormalizer
+- Text normalization tự động chạy sau transcription
+- Fix all caps → proper case
+- Fix sentence capitalization
+- Nếu vẫn có vấn đề, check logs: `[LOCAL WHISPER] Applied text normalization`
+
+### Nhiều file recording_ còn lại trong uploads
+**Giải pháp**:
+- Files sẽ tự động bị xóa sau 1 ngày (retention period)
+- Cleanup chạy tự động khi server start và sau mỗi request
+- Có thể giảm retention period trong `FileCleanupService` nếu muốn
+- Check logs: `Cleaned up X old files`
 
 ### Lỗi: "OSError: [WinError 10038] An operation was attempted on something that is not a socket"
 **Giải pháp**: 
@@ -649,13 +759,84 @@ pip install openai-whisper
 ```
 Python/
 ├── uploads/                    # Files audio đã upload
-│   └── recording_*.mp3
+│   └── recording_*.mp3        # Files cũ (>1 ngày) sẽ tự động bị xóa
 ├── __pycache__/               # Python cache files
+├── services/                   # Service modules
+│   ├── file_cleanup_service.py
+│   └── validation_service.py
+├── utils/                      # Utility modules
+│   ├── text_normalizer.py      # Text normalization
+│   ├── ffmpeg_checker.py       # FFmpeg utility
+│   └── ...
 └── .cache/                    # Whisper model cache (tự động tạo)
     └── whisper/
         ├── base.pt            # Model base (~150MB)
         └── medium.pt          # Model medium (~1.5GB)
 ```
+
+**Lưu ý về File Cleanup:**
+- Files trong `uploads/` sẽ tự động bị xóa sau 1 ngày
+- Temp files (compressed_, _chunk_) được cleanup ngay sau khi xử lý xong
+- Cleanup chạy tự động khi server start và sau mỗi request
+
+## Advanced Features
+
+### Mock Data Schema
+- Structured data schema cho meeting summaries
+- Defined trong `utils/function_calling.py` (`MEETING_SUMMARY_SCHEMA`)
+- Support cho consistent output format
+- JSON Schema compliant
+- Properties: topic, date, participants, key_points, decisions, action_items, next_steps
+
+### Well-Crafted Prompt Templates
+- Professional prompt templates trong `utils/prompt_builder.py`
+- Language-aware prompts (support multiple languages)
+- Context-aware với meeting topic
+- System message và user prompt separation
+- Optimized cho OpenAI Chat Completion API
+- Preserve technical terms và proper nouns
+
+### Chat Completion Implementation
+- Sử dụng OpenAI Chat Completion API (`client.chat.completions.create`)
+- Structured message format:
+  - System message: Định nghĩa AI role và behavior
+  - User message: Context và instructions
+  - Assistant message: AI responses
+- Support cho multi-turn dialogue
+- Context preservation across turns
+
+### Function Calling
+- Function definitions với JSON Schema
+- Dynamic function registration (`FunctionRegistry`)
+- Handler execution
+- Structured output support
+- Example functions: `get_summary_format()`, `extract_action_items()`
+- Mock data schema integration
+
+### Batch Processing
+- Process multiple requests efficiently
+- Thread pool execution với configurable workers
+- Timeout handling cho mỗi request
+- Request queuing và batching
+- Callback support cho async processing
+- Error handling và result aggregation
+
+### Message Management
+- Conversation history tracking (`MessageManager`)
+- Multi-turn dialogue support
+- Context preservation
+- History trimming (max_history configurable)
+- Timestamp tracking cho messages
+- API-ready message format conversion
+- Conversation summary và statistics
+
+### Multi-Turn Dialogue
+- Maintain context across conversation turns
+- Reference previous messages
+- Build on conversation history
+- Natural conversation flow
+- Context window management
+- History trimming strategy
 
 ## Hỗ trợ
 

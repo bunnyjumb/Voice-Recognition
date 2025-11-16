@@ -186,10 +186,12 @@ def process_audio():
             logger.error(f"✗ Summarization failed after {summary_duration:.2f} seconds: {str(e)}")
             raise
         
-        # Step 7: Cleanup old files (async, don't block response)
+        # Step 7: Cleanup old files and temp files
         try:
-            # Cleanup old files in background (non-blocking)
-            cleanup_service.cleanup_old_files()
+            # Cleanup old files (non-blocking)
+            deleted_count = cleanup_service.cleanup_old_files()
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old files")
         except Exception as e:
             logger.warning(f"Cleanup failed (non-critical): {e}")
         

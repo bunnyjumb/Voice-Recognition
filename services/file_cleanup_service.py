@@ -25,8 +25,8 @@ class FileCleanupService:
     - Safe cleanup with error handling
     """
     
-    # Default retention period: 7 days
-    DEFAULT_RETENTION_DAYS = 7
+    # Default retention period: 1 day (files older than 1 day will be cleaned up)
+    DEFAULT_RETENTION_DAYS = 1
     
     # File patterns to identify temporary files
     TEMP_FILE_PATTERNS = [
