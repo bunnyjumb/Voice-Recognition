@@ -55,8 +55,21 @@ class AIService:
         The client is initialized with configuration from config.py.
         If initialization fails, the service will still be available but
         will use local Whisper for transcription instead of API.
+        
+        Also preloads common Whisper models in background for better performance.
         """
         self.client = self._initialize_client()
+        
+        # Preload common Whisper models in background
+        # This improves user experience by having models ready when needed
+        try:
+            from services.whisper_model_cache import get_model_cache
+            cache = get_model_cache()
+            cache.preload_common_models()
+            print("[AISERVICE] Started preloading common Whisper models in background...")
+        except Exception as e:
+            print(f"[AISERVICE] Warning: Could not preload models: {e}")
+            # Continue without preloading - models will be loaded on demand
     
     def _initialize_client(self) -> Optional[openai.OpenAI]:
         """
@@ -536,12 +549,21 @@ class AIService:
             print(f"[LOCAL WHISPER] Loading Whisper model: {model_name}...")
             print("[LOCAL WHISPER] This may take a while on first use (downloading model)...")
             
+            # Use cached model instead of loading every time
+            from services.whisper_model_cache import get_model_cache
+            cache = get_model_cache()
+            
             import time
             model_load_start = time.time()
             try:
-                model = whisper.load_model(model_name)
+                # Get model from cache (will load if not cached)
+                model = cache.get_model(model_name)
                 model_load_duration = time.time() - model_load_start
-                print(f"[LOCAL WHISPER] ✓ Model loaded successfully in {model_load_duration:.2f} seconds")
+                
+                if model_load_duration < 0.1:
+                    print(f"[LOCAL WHISPER] ✓ Model '{model_name}' loaded from cache (instant)")
+                else:
+                    print(f"[LOCAL WHISPER] ✓ Model '{model_name}' loaded in {model_load_duration:.2f} seconds")
             except Exception as model_error:
                 error_msg = str(model_error)
                 if "WinError 2" in error_msg or "cannot find the file" in error_msg.lower():
@@ -568,19 +590,35 @@ class AIService:
             print(f"[LOCAL WHISPER] Starting transcription...")
             if whisper_language:
                 print(f"[LOCAL WHISPER] Language: {whisper_language}")
-            print("[LOCAL WHISPER] This may take a while depending on file size and CPU speed...")
+            
+            # Estimate processing time (rough estimate: ~1-2 minutes per MB for medium model on CPU)
+            estimated_time_min = (file_size / (1024 * 1024)) * 1.5  # ~1.5 min per MB
+            print(f"[LOCAL WHISPER] Estimated processing time: ~{estimated_time_min:.1f} minutes")
+            print("[LOCAL WHISPER] This is CPU-intensive and may take a while...")
+            print("[LOCAL WHISPER] Please be patient - transcription is in progress...")
             
             # Transcribe - use absolute path to avoid path issues
             import time
             transcribe_start = time.time()
+            last_log_time = transcribe_start
+            
+            # Start transcription in a way that allows periodic logging
             try:
+                # Note: Whisper transcribe is blocking, so we can't get real-time progress
+                # But we can log periodically using a separate thread or just log start/end
+                print("[LOCAL WHISPER] Transcription started - processing audio...")
+                
                 result = model.transcribe(
                     audio_file_path,
                     language=whisper_language,
-                    task="transcribe"
+                    task="transcribe",
+                    verbose=False  # Reduce noise
                 )
+                
                 transcribe_duration = time.time() - transcribe_start
-                print(f"[LOCAL WHISPER] ✓ Transcription completed in {transcribe_duration:.2f} seconds")
+                minutes = int(transcribe_duration // 60)
+                seconds = int(transcribe_duration % 60)
+                print(f"[LOCAL WHISPER] ✓ Transcription completed in {minutes}m {seconds}s ({transcribe_duration:.2f} seconds)")
             except FileNotFoundError as fnf_error:
                 error_msg = str(fnf_error)
                 if "ffmpeg" in error_msg.lower() or "ffprobe" in error_msg.lower():

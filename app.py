@@ -31,8 +31,13 @@ logger.info(f"Upload folder configured: {UPLOAD_FOLDER}")
 # Initialize services
 logger.info("Initializing services...")
 audio_service = AudioService(upload_folder=UPLOAD_FOLDER)
+logger.info("AudioService initialized")
+
+# Initialize AI service (this will preload Whisper models in background)
+logger.info("Initializing AIService (preloading Whisper models in background)...")
 ai_service = AIService()
-logger.info("Services initialized successfully")
+logger.info("AIService initialized - Whisper models are preloading in background")
+logger.info("Note: First request may wait for model loading, subsequent requests will be faster")
 
 
 @app.route('/')
