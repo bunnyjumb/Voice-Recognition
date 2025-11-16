@@ -41,7 +41,9 @@ class AudioService:
         Raises:
             ValueError: If file is empty or invalid
         """
+        print("[AUDIO SERVICE] Saving audio file...")
         if not file or file.filename == '':
+            print("[AUDIO SERVICE] ✗ No file provided or filename is empty")
             raise ValueError("No file provided or filename is empty")
         
         # Generate unique filename with timestamp
@@ -51,11 +53,20 @@ class AudioService:
         filename = f"recording_{timestamp}{file_extension}"
         filepath = os.path.join(self.upload_folder, filename)
         
+        print(f"[AUDIO SERVICE] Original filename: {original_filename}")
+        print(f"[AUDIO SERVICE] Generated filename: {filename}")
+        print(f"[AUDIO SERVICE] Filepath: {filepath}")
+        
         # Save file
         file.save(filepath)
         
         if not os.path.exists(filepath):
+            print(f"[AUDIO SERVICE] ✗ Failed to save file to {filepath}")
             raise IOError(f"Failed to save file to {filepath}")
+        
+        file_size = os.path.getsize(filepath)
+        file_size_mb = file_size / (1024 * 1024)
+        print(f"[AUDIO SERVICE] ✓ File saved successfully ({file_size_mb:.2f}MB)")
         
         return filepath, filename
     

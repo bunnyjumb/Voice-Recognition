@@ -1,6 +1,19 @@
 """
 AI Service Module
 Handles AI operations including transcription and summarization.
+
+This module provides:
+- Audio transcription using OpenAI Whisper API or local Whisper model
+- Text summarization using OpenAI GPT models
+- Support for multiple languages with optimized settings
+- Automatic fallback mechanisms for reliability
+- Integration with OpenAI SDK features (function calling, batching, message management)
+
+Features:
+- Automatic API fallback to local Whisper when API is unavailable
+- Vietnamese-specific optimizations (larger model, post-processing)
+- Large file handling (compression and chunking)
+- Multi-turn dialogue support with context management
 """
 import os
 import openai
@@ -16,23 +29,54 @@ from config import (
 
 
 class AIService:
-    """Service for handling AI operations."""
+    """
+    Service for handling AI operations.
+    
+    This class manages:
+    - OpenAI API client initialization and management
+    - Audio transcription (API and local Whisper fallback)
+    - Text summarization with chunking support
+    - Language-specific optimizations
+    - Error handling and fallback mechanisms
+    
+    Attributes:
+        client: OpenAI client instance (initialized on __init__)
+        max_chunk_size: Maximum file size for transcription chunks (25MB)
+    """
     
     # Maximum chunk size for transcription (25MB - API limit, but local Whisper can handle larger)
+    # This is used when splitting large audio files for processing
     max_chunk_size = 25 * 1024 * 1024  # 25MB
     
     def __init__(self):
-        """Initialize AI service with OpenAI client."""
+        """
+        Initialize AI service with OpenAI client.
+        
+        The client is initialized with configuration from config.py.
+        If initialization fails, the service will still be available but
+        will use local Whisper for transcription instead of API.
+        """
         self.client = self._initialize_client()
     
     def _initialize_client(self) -> Optional[openai.OpenAI]:
         """
-        Initialize OpenAI client.
+        Initialize OpenAI client with configured base URL and API key.
+        
+        This method creates an OpenAI client instance using the base URL
+        and API key from configuration. The client is used for both
+        transcription (Whisper API) and summarization (GPT models).
         
         Returns:
-            OpenAI client instance or None if initialization fails
+            OpenAI client instance if successful, None if initialization fails
+            
+        Note:
+            If initialization fails, the service will fall back to local
+            Whisper for transcription, but summarization will not be available.
         """
         try:
+            # Create OpenAI client with custom base URL and API key
+            # This allows using alternative API providers that are compatible
+            # with OpenAI's API format
             client = openai.OpenAI(
                 base_url=OPENAI_BASE_URL,
                 api_key=OPENAI_API_KEY
@@ -40,6 +84,7 @@ class AIService:
             print(f"OpenAI client initialized successfully with base URL: {OPENAI_BASE_URL}")
             return client
         except Exception as e:
+            # Log error but don't raise - allow fallback to local Whisper
             print(f"Error initializing OpenAI client: {e}")
             return None
     
@@ -324,12 +369,16 @@ class AIService:
                     
                     try:
                         # Standard OpenAI API call
+                        print("[API] Calling OpenAI Whisper API...")
+                        import time
+                        api_start = time.time()
                         transcript_response = self.client.audio.transcriptions.create(
                             **transcription_params
                         )
+                        api_duration = time.time() - api_start
                         
                         if hasattr(transcript_response, 'text') and transcript_response.text:
-                            print("✓ API transcription successful")
+                            print(f"[API] ✓ API transcription successful in {api_duration:.2f} seconds")
                             return transcript_response.text
                         else:
                             raise RuntimeError("API returned empty transcript")
@@ -467,19 +516,32 @@ class AIService:
                 "After installing FFmpeg, restart the application and try again."
             )
         
-        print("Using local Whisper for transcription...")
-        print(f"Audio file: {audio_file_path}")
-        print(f"File size: {file_size / (1024*1024):.2f}MB")
-        print("Note: First-time use will download the model (~1.5GB)")
+        print("=" * 60)
+        print("[LOCAL WHISPER] Starting local Whisper transcription...")
+        print(f"[LOCAL WHISPER] Audio file: {audio_file_path}")
+        print(f"[LOCAL WHISPER] File size: {file_size / (1024*1024):.2f}MB")
+        print("[LOCAL WHISPER] Note: First-time use will download the model (~1.5GB)")
+        print("=" * 60)
         
         try:
-            # Load Whisper model (base model is a good balance of speed and accuracy)
+            # Load Whisper model - use larger model for Vietnamese for better accuracy
             # Options: tiny, base, small, medium, large
-            model_name = "base"
-            print(f"Loading Whisper model: {model_name}...")
+            # For Vietnamese, use 'medium' or 'large' for better accuracy
+            # 'medium' is a good balance between accuracy and speed
+            if language == 'vi':
+                model_name = "medium"  # Better accuracy for Vietnamese
+                print("[LOCAL WHISPER] Using 'medium' model for Vietnamese (better accuracy)")
+            else:
+                model_name = "base"  # Good balance for other languages
+            print(f"[LOCAL WHISPER] Loading Whisper model: {model_name}...")
+            print("[LOCAL WHISPER] This may take a while on first use (downloading model)...")
             
+            import time
+            model_load_start = time.time()
             try:
                 model = whisper.load_model(model_name)
+                model_load_duration = time.time() - model_load_start
+                print(f"[LOCAL WHISPER] ✓ Model loaded successfully in {model_load_duration:.2f} seconds")
             except Exception as model_error:
                 error_msg = str(model_error)
                 if "WinError 2" in error_msg or "cannot find the file" in error_msg.lower():
@@ -503,17 +565,22 @@ class AIService:
             if language and language in LANGUAGE_MAP:
                 whisper_language = LANGUAGE_MAP[language]
             
-            print(f"Transcribing audio file...")
+            print(f"[LOCAL WHISPER] Starting transcription...")
             if whisper_language:
-                print(f"Language: {whisper_language}")
+                print(f"[LOCAL WHISPER] Language: {whisper_language}")
+            print("[LOCAL WHISPER] This may take a while depending on file size and CPU speed...")
             
             # Transcribe - use absolute path to avoid path issues
+            import time
+            transcribe_start = time.time()
             try:
                 result = model.transcribe(
                     audio_file_path,
                     language=whisper_language,
                     task="transcribe"
                 )
+                transcribe_duration = time.time() - transcribe_start
+                print(f"[LOCAL WHISPER] ✓ Transcription completed in {transcribe_duration:.2f} seconds")
             except FileNotFoundError as fnf_error:
                 error_msg = str(fnf_error)
                 if "ffmpeg" in error_msg.lower() or "ffprobe" in error_msg.lower():
@@ -546,7 +613,22 @@ class AIService:
                     "Please ensure your audio file contains clear speech."
                 )
             
-            print("✓ Local Whisper transcription successful")
+            # Post-process transcript for Vietnamese to improve accuracy
+            if language == 'vi':
+                print("[LOCAL WHISPER] Applying Vietnamese post-processing...")
+                try:
+                    from utils.vietnamese_postprocessor import VietnamesePostProcessor
+                    post_processor = VietnamesePostProcessor()
+                    transcript = post_processor.post_process(transcript)
+                    print("[LOCAL WHISPER] ✓ Applied Vietnamese post-processing")
+                except Exception as e:
+                    print(f"[LOCAL WHISPER] Warning: Vietnamese post-processing failed: {e}")
+                    # Continue with original transcript if post-processing fails
+            
+            print("=" * 60)
+            print("[LOCAL WHISPER] ✓ Transcription successful")
+            print(f"[LOCAL WHISPER] Transcript length: {len(transcript)} characters")
+            print("=" * 60)
             return transcript
             
         except RuntimeError:
@@ -620,9 +702,15 @@ class AIService:
         if not self.is_available():
             raise RuntimeError("OpenAI client is not initialized")
         
+        print("[SUMMARIZATION] Starting summarization process...")
+        print(f"[SUMMARIZATION] Transcript length: {len(transcript)} characters")
+        print(f"[SUMMARIZATION] Topic: {topic}")
+        print(f"[SUMMARIZATION] Language: {language}")
+        
         # Check if transcript is too long and needs chunking
         if len(transcript) <= MAX_CHARS_PER_CHUNK:
             # Short transcript - summarize directly
+            print("[SUMMARIZATION] Transcript is short, summarizing directly...")
             return self._summarize_single_chunk(
                 transcript=transcript,
                 topic=topic,
@@ -631,7 +719,7 @@ class AIService:
             )
         else:
             # Long transcript - use chunked summarization
-            print(f"Transcript is long ({len(transcript)} chars). Using chunked summarization...")
+            print(f"[SUMMARIZATION] Transcript is long ({len(transcript)} chars). Using chunked summarization...")
             return self._summarize_chunked(
                 transcript=transcript,
                 topic=topic,
@@ -658,6 +746,7 @@ class AIService:
         Returns:
             Summary text
         """
+        print("[SUMMARIZATION] Building prompts...")
         from utils.prompt_builder import PromptBuilder
         
         prompt_builder = PromptBuilder()
@@ -667,8 +756,12 @@ class AIService:
             language=language,
             custom_language=custom_language
         )
+        print("[SUMMARIZATION] ✓ Prompts built")
         
         try:
+            print(f"[SUMMARIZATION] Calling OpenAI API with model: {OPENAI_MODEL_SUMMARY}...")
+            import time
+            api_start = time.time()
             response = self.client.chat.completions.create(
                 model=OPENAI_MODEL_SUMMARY,
                 messages=[
@@ -676,8 +769,11 @@ class AIService:
                     {"role": "user", "content": user_prompt}
                 ]
             )
+            api_duration = time.time() - api_start
+            print(f"[SUMMARIZATION] ✓ API call completed in {api_duration:.2f} seconds")
             return response.choices[0].message.content
         except Exception as e:
+            print(f"[SUMMARIZATION] ✗ API call failed: {str(e)}")
             raise RuntimeError(f"Summarization failed: {str(e)}")
     
     def _summarize_chunked(
@@ -708,20 +804,25 @@ class AIService:
         from utils.prompt_builder import PromptBuilder
         
         # Split transcript into chunks
+        print("[SUMMARIZATION] Splitting transcript into chunks...")
         chunker = TextChunker()
         chunks = chunker.chunk_text(transcript)
-        print(f"Split transcript into {len(chunks)} chunks")
+        print(f"[SUMMARIZATION] ✓ Split transcript into {len(chunks)} chunks")
         
         # Summarize each chunk
         chunk_summaries: List[str] = []
+        import time
         for i, chunk in enumerate(chunks, 1):
-            print(f"Summarizing chunk {i}/{len(chunks)}...")
+            print(f"[SUMMARIZATION] Processing chunk {i}/{len(chunks)}...")
+            chunk_start = time.time()
             chunk_summary = self._summarize_single_chunk(
                 transcript=chunk,
                 topic=topic,  # Include topic for context
                 language=language,
                 custom_language=custom_language
             )
+            chunk_duration = time.time() - chunk_start
+            print(f"[SUMMARIZATION] ✓ Chunk {i}/{len(chunks)} completed in {chunk_duration:.2f} seconds")
             chunk_summaries.append(chunk_summary)
         
         # If we only have one chunk summary, return it
@@ -729,13 +830,15 @@ class AIService:
             return chunk_summaries[0]
         
         # Combine chunk summaries into final summary
-        print(f"Combining {len(chunk_summaries)} chunk summaries into final summary...")
+        print(f"[SUMMARIZATION] Combining {len(chunk_summaries)} chunk summaries into final summary...")
         combined_summaries = "\n\n---\n\n".join([
             f"Section {i+1} Summary:\n{summary}"
             for i, summary in enumerate(chunk_summaries)
         ])
+        print(f"[SUMMARIZATION] ✓ Combined summaries length: {len(combined_summaries)} characters")
         
         # Create prompt for final summary
+        print("[SUMMARIZATION] Building final summary prompt...")
         prompt_builder = PromptBuilder()
         # Get language name (using the same logic as PromptBuilder)
         if language == 'other' and custom_language:
@@ -776,6 +879,8 @@ Section Summaries:
 Please provide the final comprehensive summary:"""
         
         try:
+            print(f"[SUMMARIZATION] Calling OpenAI API for final summary with model: {OPENAI_MODEL_SUMMARY}...")
+            final_start = time.time()
             response = self.client.chat.completions.create(
                 model=OPENAI_MODEL_SUMMARY,
                 messages=[
@@ -783,7 +888,10 @@ Please provide the final comprehensive summary:"""
                     {"role": "user", "content": user_prompt}
                 ]
             )
+            final_duration = time.time() - final_start
+            print(f"[SUMMARIZATION] ✓ Final summary completed in {final_duration:.2f} seconds")
             return response.choices[0].message.content
         except Exception as e:
+            print(f"[SUMMARIZATION] ✗ Final summarization failed: {str(e)}")
             raise RuntimeError(f"Final summarization failed: {str(e)}")
 
