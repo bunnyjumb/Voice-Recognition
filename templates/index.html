@@ -1,0 +1,607 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meeting Summary Assistant</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; padding: 20px; max-width: 900px; margin: auto; background-color: #f4f4f9; }
+        h1 { text-align: center; color: #333; }
+        .container { background: #fff; padding: 30px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .form-group { margin-bottom: 20px; }
+        .form-group label { display: block; margin-bottom: 8px; font-weight: 600; color: #333; }
+        .form-group input, .form-group select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; box-sizing: border-box; transition: border-color 0.3s, box-shadow 0.3s; }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #007bff; box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1); }
+        .form-group input.error-field, .form-group select.error-field { border: 2px solid #dc3545; box-shadow: 0 0 0 3px rgba(220, 53, 69, 0.1); animation: shake 0.3s; }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); }
+            75% { transform: translateX(5px); }
+        }
+        .upload-section { margin: 20px 0; padding: 20px; background: #f8f9fa; border-radius: 5px; border: 2px dashed #ddd; }
+        .upload-section.dragover { border-color: #007bff; background: #e7f3ff; }
+        #fileInput { display: none; }
+        .upload-label { display: block; padding: 15px; text-align: center; background: #007bff; color: white; border-radius: 5px; cursor: pointer; transition: background 0.3s; }
+        .upload-label:hover { background: #0056b3; }
+        #recordButton { display: block; width: 100%; padding: 15px; font-size: 18px; color: white; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; margin-top: 10px; }
+        .start { background-color: #28a745; }
+        .start:hover { background-color: #218838; }
+        .stop { background-color: #dc3545; }
+        .stop:hover { background-color: #c82333; }
+        #status { text-align: center; margin-top: 15px; font-style: italic; color: #666; min-height: 20px; }
+        .error { color: #dc3545; font-weight: 600; }
+        .success { color: #28a745; }
+        #progressContainer { margin-top: 20px; display: none; }
+        #progressBar { width: 100%; height: 25px; background-color: #e9ecef; border-radius: 5px; overflow: hidden; margin-top: 10px; }
+        #progressFill { height: 100%; background-color: #007bff; width: 0%; transition: width 0.3s ease; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 600; }
+        #progressText { text-align: center; margin-top: 5px; color: #666; font-size: 14px; }
+        #results { margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; display: none; }
+        h2 { color: #0056b3; }
+        h3 { color: #495057; margin-top: 20px; }
+        #summary, #transcript { background: #e9ecef; padding: 15px; border-radius: 5px; white-space: pre-wrap; word-wrap: break-word; margin-top: 10px; }
+        #status.error { white-space: pre-line; text-align: left; background: #fff5f5; padding: 15px; border-radius: 5px; border-left: 4px solid #dc3545; max-width: 100%; }
+        #downloadLink { display: inline-block; margin-top: 15px; padding: 10px 15px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px; }
+        #downloadLink:hover { background-color: #0056b3; }
+        .divider { margin: 25px 0; border-top: 2px solid #eee; }
+        .warning-banner { background: #fff3cd; border: 1px solid #ffc107; border-radius: 5px; padding: 15px; margin: 15px 0; display: none; }
+        .warning-banner.show { display: block; }
+        .warning-banner h4 { margin: 0 0 10px 0; color: #856404; }
+        .warning-banner ul { margin: 10px 0; padding-left: 20px; color: #856404; }
+        .warning-banner a { color: #0056b3; text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Meeting Summary Assistant</h1>
+        
+        <div class="form-group">
+            <label for="topic">Meeting Topic <span style="color: red;">*</span>:</label>
+            <input type="text" id="topic" required placeholder="e.g., Project Meeting, Technical Discussion, Business Review..." />
+            <small style="color: #666; font-size: 12px;">Required: Enter the topic to help AI create more accurate summaries and preserve technical terms</small>
+        </div>
+
+        <div class="form-group">
+            <label for="language">Conversation Language <span style="color: red;">*</span>:</label>
+            <select id="language" required>
+                <option value="">-- Please select --</option>
+                <option value="vi">Tiếng Việt (Vietnamese)</option>
+                <option value="en">English</option>
+                <option value="zh">中文 (Chinese)</option>
+                <option value="ja">日本語 (Japanese)</option>
+                <option value="ko">한국어 (Korean)</option>
+                <option value="fr">Français (French)</option>
+                <option value="de">Deutsch (German)</option>
+                <option value="es">Español (Spanish)</option>
+                <option value="other">Other (Custom)</option>
+            </select>
+        </div>
+
+        <div class="form-group" id="customLanguageGroup" style="display: none;">
+            <label for="customLanguage">Please specify the language <span style="color: red;">*</span>:</label>
+            <input type="text" id="customLanguage" placeholder="e.g., Portuguese, Italian, Russian..." />
+            <small style="color: #666; font-size: 12px;">Required when "Other" is selected. Enter the language name in English (e.g., "Portuguese", "Italian")</small>
+        </div>
+
+        <div class="divider"></div>
+        
+        <div class="warning-banner" id="ffmpegWarning">
+            <h4>⚠️ FFmpeg Not Available</h4>
+            <p style="color: #856404; margin: 0 0 10px 0;">
+                FFmpeg is not installed on the server. Large audio files (> 25MB) cannot be processed automatically.
+            </p>
+            <p style="color: #856404; margin: 0 0 10px 0; font-weight: 600;">
+                To enable automatic compression and splitting of large files, please install FFmpeg on the server:
+            </p>
+            <ul style="margin: 10px 0; padding-left: 20px; color: #856404;">
+                <li><strong>Windows:</strong> Download from <a href="https://www.gyan.dev/ffmpeg/builds/" target="_blank">https://www.gyan.dev/ffmpeg/builds/</a> or use <code>choco install ffmpeg</code></li>
+                <li><strong>Linux:</strong> <code>sudo apt-get install ffmpeg</code> (Ubuntu/Debian)</li>
+                <li><strong>Mac:</strong> <code>brew install ffmpeg</code></li>
+            </ul>
+            <p style="color: #856404; margin: 10px 0 0 0;">
+                <strong>Current limitation:</strong> You can only upload audio files smaller than 25MB. Please compress large files manually before uploading.
+            </p>
+        </div>
+
+        <div class="upload-section" id="uploadSection">
+            <label for="fileInput" class="upload-label">📁 Or Upload Audio File</label>
+            <input type="file" id="fileInput" accept="audio/*" />
+            <p id="fileName" style="text-align: center; margin-top: 10px; color: #666; display: none;"></p>
+        </div>
+
+        <div class="divider"></div>
+
+        <button id="recordButton" class="start">🎤 Start Recording</button>
+        <p id="status">Click the button above to start recording or upload an audio file.</p>
+        
+        <div id="progressContainer">
+            <div id="progressBar">
+                <div id="progressFill">0%</div>
+            </div>
+            <div id="progressText">Initializing...</div>
+        </div>
+ 
+        <div id="results">
+            <h2>Results</h2>
+            <a id="downloadLink" href="#" download="recording.webm">Download Audio File</a>
+            
+            <h3>Summary:</h3>
+            <div id="summary"></div>
+            
+            <hr style="margin: 20px 0;">
+
+            <h3>Original Transcript:</h3>
+            <div id="transcript"></div>
+        </div>
+    </div>
+ 
+    <script>
+        const recordButton = document.getElementById('recordButton');
+        const statusElement = document.getElementById('status');
+        const resultsElement = document.getElementById('results');
+        const summaryElement = document.getElementById('summary');
+        const transcriptElement = document.getElementById('transcript');
+        const downloadLink = document.getElementById('downloadLink');
+        const fileInput = document.getElementById('fileInput');
+        const fileName = document.getElementById('fileName');
+        const uploadSection = document.getElementById('uploadSection');
+        const topicInput = document.getElementById('topic');
+        const languageSelect = document.getElementById('language');
+        const customLanguageGroup = document.getElementById('customLanguageGroup');
+        const customLanguageInput = document.getElementById('customLanguage');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressFill = document.getElementById('progressFill');
+        const progressText = document.getElementById('progressText');
+
+        let isRecording = false;
+        let mediaRecorder;
+        let audioChunks = [];
+        let currentStream = null;
+        
+        // Progress simulation function
+        function updateProgress(percent, text) {
+            progressFill.style.width = percent + '%';
+            progressFill.textContent = Math.round(percent) + '%';
+            progressText.textContent = text;
+        }
+        
+        function showProgress() {
+            progressContainer.style.display = 'block';
+            updateProgress(0, 'Initializing...');
+        }
+        
+        function hideProgress() {
+            progressContainer.style.display = 'none';
+        }
+
+        // Show/hide custom language input based on selection
+        languageSelect.addEventListener('change', () => {
+            if (languageSelect.value === 'other') {
+                customLanguageGroup.style.display = 'block';
+                customLanguageInput.required = true;
+            } else {
+                customLanguageGroup.style.display = 'none';
+                customLanguageInput.required = false;
+                customLanguageInput.value = '';
+            }
+        });
+        
+        // Remove error styling from fields
+        function clearFieldErrors() {
+            topicInput.classList.remove('error-field');
+            languageSelect.classList.remove('error-field');
+            customLanguageInput.classList.remove('error-field');
+        }
+        
+        // Add error styling to field
+        function markFieldError(field, message) {
+            field.classList.add('error-field');
+            statusElement.textContent = message;
+            statusElement.classList.add('error');
+            field.focus();
+            // Scroll to field if needed
+            field.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        }
+        
+        // Validation function with visual feedback
+        function validateForm() {
+            clearFieldErrors();
+            
+            const topic = topicInput.value.trim();
+            const language = languageSelect.value;
+            const customLanguage = customLanguageInput.value.trim();
+            
+            if (!topic) {
+                markFieldError(topicInput, '❌ Error: Meeting Topic is required!');
+                return false;
+            }
+            
+            if (!language) {
+                markFieldError(languageSelect, '❌ Error: Conversation Language is required!');
+                return false;
+            }
+            
+            if (language === 'other' && !customLanguage) {
+                markFieldError(customLanguageInput, '❌ Error: Please specify the custom language!');
+                return false;
+            }
+            
+            // All valid
+            statusElement.classList.remove('error');
+            return true;
+        }
+        
+        // Remove error styling when user starts typing/selecting
+        topicInput.addEventListener('input', () => {
+            if (topicInput.classList.contains('error-field')) {
+                topicInput.classList.remove('error-field');
+            }
+        });
+        
+        languageSelect.addEventListener('change', () => {
+            if (languageSelect.classList.contains('error-field')) {
+                languageSelect.classList.remove('error-field');
+            }
+        });
+        
+        customLanguageInput.addEventListener('input', () => {
+            if (customLanguageInput.classList.contains('error-field')) {
+                customLanguageInput.classList.remove('error-field');
+            }
+        });
+
+        // Check MediaRecorder support
+        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+            statusElement.textContent = 'Your browser does not support recording. Please use a modern browser.';
+            statusElement.classList.add('error');
+            recordButton.disabled = true;
+        }
+        
+        // Check FFmpeg availability on server
+        let ffmpegAvailable = null;
+        const ffmpegWarning = document.getElementById('ffmpegWarning');
+        
+        function checkFFmpeg() {
+            fetch('/check-ffmpeg')
+                .then(response => response.json())
+                .then(data => {
+                    ffmpegAvailable = data.ffmpeg_available;
+                    if (!ffmpegAvailable) {
+                        console.warn('FFmpeg not available on server');
+                        // Show warning banner
+                        if (ffmpegWarning) {
+                            ffmpegWarning.classList.add('show');
+                        }
+                    } else {
+                        // Hide warning banner
+                        if (ffmpegWarning) {
+                            ffmpegWarning.classList.remove('show');
+                        }
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking FFmpeg:', error);
+                    ffmpegAvailable = false;
+                    // Show warning on error (assume not available)
+                    if (ffmpegWarning) {
+                        ffmpegWarning.classList.add('show');
+                    }
+                });
+        }
+        checkFFmpeg(); // Check on page load
+
+        // Handle file upload
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                // Check file type
+                if (!file.type.startsWith('audio/')) {
+                    statusElement.textContent = '❌ Error: Please select an audio file! Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm';
+                    statusElement.classList.add('error');
+                    fileInput.value = '';
+                    fileName.style.display = 'none';
+                    const processButton = document.getElementById('processFileButton');
+                    if (processButton) {
+                        processButton.remove();
+                    }
+                    return;
+                }
+                
+                // Check file size (warn if very large, but allow upload)
+                const maxSize = 25 * 1024 * 1024; // 25MB (Whisper limit per chunk)
+                const maxRecommendedSize = 100 * 1024 * 1024; // 100MB (server limit)
+                const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+                
+                if (file.size > maxRecommendedSize) {
+                    if (ffmpegAvailable === false) {
+                        statusElement.textContent = `❌ Error: File is too large (${fileSizeMB}MB) and FFmpeg is not installed on server. Please compress file to < 25MB before uploading or install FFmpeg on server.`;
+                        statusElement.classList.add('error');
+                        fileInput.value = '';
+                        fileName.style.display = 'none';
+                        const processButton = document.getElementById('processFileButton');
+                        if (processButton) {
+                            processButton.remove();
+                        }
+                        return;
+                    }
+                    statusElement.textContent = `⚠️ Warning: File is very large (${fileSizeMB}MB). Maximum recommended size is 100MB. Processing may take longer.`;
+                    statusElement.classList.add('error');
+                } else if (file.size > maxSize) {
+                    if (ffmpegAvailable === false) {
+                        statusElement.textContent = `❌ Error: File is too large (${fileSizeMB}MB) and FFmpeg is not installed. File must be < 25MB. Please compress file manually or install FFmpeg on server.`;
+                        statusElement.classList.add('error');
+                        fileInput.value = '';
+                        fileName.style.display = 'none';
+                        const processButton = document.getElementById('processFileButton');
+                        if (processButton) {
+                            processButton.remove();
+                        }
+                        return;
+                    }
+                    statusElement.textContent = `ℹ️ Info: File is large (${fileSizeMB}MB). The system will automatically compress and split it for processing.`;
+                    statusElement.classList.remove('error');
+                    statusElement.classList.add('success');
+                }
+                
+                // File is valid
+                fileName.textContent = `Selected: ${file.name} (${fileSizeMB}MB)`;
+                fileName.style.display = 'block';
+                statusElement.textContent = '✅ File ready. Click "Process Audio File" button to start summarization.';
+                statusElement.classList.remove('error');
+                statusElement.classList.add('success');
+                
+                // Create process button if it doesn't exist
+                let processButton = document.getElementById('processFileButton');
+                if (!processButton) {
+                    processButton = document.createElement('button');
+                    processButton.id = 'processFileButton';
+                    processButton.textContent = '📤 Process Audio File';
+                    processButton.className = 'start';
+                    processButton.style.width = '100%';
+                    processButton.style.marginTop = '10px';
+                    processButton.addEventListener('click', () => {
+                        processFile(file);
+                    });
+                    uploadSection.appendChild(processButton);
+                }
+            }
+        });
+
+        // Drag and drop
+        uploadSection.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            uploadSection.classList.add('dragover');
+        });
+
+        uploadSection.addEventListener('dragleave', () => {
+            uploadSection.classList.remove('dragover');
+        });
+
+        uploadSection.addEventListener('drop', (e) => {
+            e.preventDefault();
+            uploadSection.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                fileInput.dispatchEvent(new Event('change'));
+            }
+        });
+
+        // Handle recording
+        recordButton.addEventListener('click', async () => {
+            if (isRecording) {
+                // Stop recording
+                stopRecording();
+            } else {
+                // Start recording
+                await startRecording();
+            }
+        });
+
+        async function startRecording() {
+            try {
+                statusElement.textContent = 'Requesting microphone access...';
+                statusElement.classList.remove('error', 'success');
+                
+                currentStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                mediaRecorder = new MediaRecorder(currentStream);
+                
+                mediaRecorder.ondataavailable = event => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                    }
+                };
+
+                mediaRecorder.onstop = () => {
+                    if (audioChunks.length > 0) {
+                        const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                        audioChunks = [];
+                        sendData(audioBlob, 'recording.webm');
+                    }
+                    // Stop all tracks
+                    if (currentStream) {
+                        currentStream.getTracks().forEach(track => track.stop());
+                        currentStream = null;
+                    }
+                };
+
+                mediaRecorder.onerror = (event) => {
+                    console.error('MediaRecorder error:', event);
+                    statusElement.textContent = 'An error occurred while recording. Please try again.';
+                    statusElement.classList.add('error');
+                    stopRecording();
+                };
+
+                audioChunks = [];
+                mediaRecorder.start();
+                recordButton.textContent = '⏹️ Stop Recording';
+                recordButton.classList.remove('start');
+                recordButton.classList.add('stop');
+                statusElement.textContent = '🎤 Recording... Click button to stop.';
+                statusElement.classList.remove('error');
+                statusElement.classList.add('success');
+                resultsElement.style.display = 'none';
+                isRecording = true;
+            } catch (error) {
+                console.error("Error accessing microphone: ", error);
+                let errorMsg = 'Cannot access microphone. ';
+                if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
+                    errorMsg += 'Please grant microphone access in browser settings.';
+                } else if (error.name === 'NotFoundError' || error.name === 'DevicesNotFoundError') {
+                    errorMsg += 'Microphone not found. Please check your device.';
+                } else {
+                    errorMsg += `Error: ${error.message}`;
+                }
+                statusElement.textContent = errorMsg;
+                statusElement.classList.add('error');
+                recordButton.textContent = '🎤 Start Recording';
+                recordButton.classList.remove('stop');
+                recordButton.classList.add('start');
+                isRecording = false;
+            }
+        }
+
+        function stopRecording() {
+            // Validate form before processing
+            if (!validateForm()) {
+                // If validation fails, don't stop recording
+                return;
+            }
+            
+            if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                mediaRecorder.stop();
+            }
+            recordButton.textContent = '🎤 Start Recording';
+            recordButton.classList.remove('stop');
+            recordButton.classList.add('start');
+            statusElement.textContent = 'Processing... Please wait.';
+            statusElement.classList.remove('error', 'success');
+            isRecording = false;
+            showProgress();
+        }
+
+        function processFile(file) {
+            // Validate form first
+            if (!validateForm()) {
+                return;
+            }
+            
+            statusElement.textContent = 'Processing file... Please wait.';
+            statusElement.classList.remove('error', 'success');
+            resultsElement.style.display = 'none';
+            showProgress();
+            sendData(file, file.name);
+        }
+
+        function sendData(audioBlob, filename) {
+            // Validate form
+            if (!validateForm()) {
+                hideProgress();
+                return;
+            }
+            
+            const formData = new FormData();
+            formData.append('audio_data', audioBlob, filename);
+            
+            // Add topic and language (required)
+            const topic = topicInput.value.trim();
+            const language = languageSelect.value;
+            
+            formData.append('topic', topic);
+            formData.append('language', language);
+            
+            // Add custom language if "other" is selected
+            if (language === 'other') {
+                const customLanguage = customLanguageInput.value.trim();
+                if (customLanguage) {
+                    formData.append('custom_language', customLanguage);
+                }
+            }
+
+            statusElement.textContent = 'Sending data to server...';
+            statusElement.classList.remove('error', 'success');
+            showProgress();
+            updateProgress(5, 'Uploading file...');
+
+            // Simulate progress updates
+            const progressInterval = setInterval(() => {
+                const current = parseInt(progressFill.style.width) || 5;
+                if (current < 90) {
+                    // Gradually increase progress
+                    let increment = 2;
+                    if (current > 40) increment = 1; // Slower after transcription starts
+                    if (current > 70) increment = 0.5; // Even slower during summarization
+                    let status = 'Initializing...';
+                    if (current < 10) {
+                        status = 'Compressing audio file...';
+                    } else if (current < 25) {
+                        status = 'Transcribing audio...';
+                    } else if (current < 60) {
+                        status = 'Processing transcript...';
+                    } else {
+                        status = 'Summarizing content...';
+                    }
+                    updateProgress(Math.min(current + increment, 90), status);
+                }
+            }, 500);
+
+            fetch('/process-audio', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => {
+                clearInterval(progressInterval);
+                if (!response.ok) {
+                    return response.json().then(data => {
+                        throw new Error(data.error || `Server error: ${response.statusText}`);
+                    });
+                }
+                updateProgress(95, 'Finalizing...');
+                return response.json();
+            })
+            .then(data => {
+                clearInterval(progressInterval);
+                if (data.error) {
+                    updateProgress(0, 'Error occurred');
+                    hideProgress();
+                    statusElement.textContent = `Error: ${data.error}`;
+                    statusElement.classList.add('error');
+                } else {
+                    updateProgress(100, 'Complete!');
+                    setTimeout(() => {
+                        hideProgress();
+                        summaryElement.textContent = data.summary;
+                        transcriptElement.textContent = data.transcript;
+                        downloadLink.href = data.download_url;
+                        downloadLink.download = filename || 'recording.webm';
+                        resultsElement.style.display = 'block';
+                        statusElement.textContent = '✅ Processing complete!';
+                        statusElement.classList.add('success');
+                        
+                        // Reset file input
+                        fileInput.value = '';
+                        fileName.style.display = 'none';
+                        const processButton = document.getElementById('processFileButton');
+                        if (processButton) {
+                            processButton.remove();
+                        }
+                    }, 500);
+                }
+            })
+            .catch(error => {
+                clearInterval(progressInterval);
+                hideProgress();
+                console.error('Error sending data:', error);
+                statusElement.textContent = `An error occurred during processing. Details: ${error.message}`;
+                statusElement.classList.add('error');
+            });
+        }
+    </script>
+</body>
+</html>
