@@ -5,8 +5,13 @@ Handles splitting large audio files into smaller chunks for processing.
 import os
 import subprocess
 import tempfile
+import logging
 from typing import List, Tuple
 from pathlib import Path
+
+from utils.ffmpeg_checker import get_ffmpeg_checker
+
+logger = logging.getLogger(__name__)
 
 
 class AudioSplitter:
@@ -24,20 +29,8 @@ class AudioSplitter:
             max_chunk_size: Maximum size per chunk in bytes
         """
         self.max_chunk_size = max_chunk_size or self.MAX_CHUNK_SIZE
-        self._ffmpeg_available = self._check_ffmpeg()
-    
-    def _check_ffmpeg(self) -> bool:
-        """Check if ffmpeg is available in system."""
-        try:
-            subprocess.run(
-                ['ffmpeg', '-version'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=5
-            )
-            return True
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            return False
+        self._ffmpeg_checker = get_ffmpeg_checker()
+        self._ffmpeg_available = self._ffmpeg_checker.is_available()
     
     def split_audio_file(self, audio_file_path: str, output_dir: str = None) -> List[str]:
         """
@@ -73,11 +66,8 @@ class AudioSplitter:
                 # Binary splitting creates invalid audio files
                 raise RuntimeError(
                     "FFmpeg is required to split large audio files.\n\n"
-                    "Please install FFmpeg:\n"
-                    "- Windows: Download from https://ffmpeg.org/download.html or use 'choco install ffmpeg'\n"
-                    "- Linux: 'sudo apt-get install ffmpeg' (Ubuntu/Debian) or 'sudo yum install ffmpeg' (RHEL/CentOS)\n"
-                    "- Mac: 'brew install ffmpeg'\n\n"
-                    "Alternatively, compress or split your audio file manually before uploading."
+                    + self._ffmpeg_checker.get_installation_instructions() +
+                    "\n\nAlternatively, compress or split your audio file manually before uploading."
                 )
         except Exception as e:
             raise RuntimeError(f"Failed to split audio file: {str(e)}")
@@ -227,6 +217,7 @@ class AudioSplitter:
             try:
                 if os.path.exists(chunk_file) and '_chunk_' in chunk_file:
                     os.remove(chunk_file)
-            except Exception:
-                pass  # Ignore cleanup errors
+                    logger.debug(f"Cleaned up chunk file: {chunk_file}")
+            except Exception as e:
+                logger.warning(f"Failed to cleanup chunk file {chunk_file}: {e}")
 

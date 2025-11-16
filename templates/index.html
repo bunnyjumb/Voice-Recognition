@@ -23,11 +23,13 @@
         #fileInput { display: none; }
         .upload-label { display: block; padding: 15px; text-align: center; background: #007bff; color: white; border-radius: 5px; cursor: pointer; transition: background 0.3s; }
         .upload-label:hover { background: #0056b3; }
-        #recordButton { display: block; width: 100%; padding: 15px; font-size: 18px; color: white; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.3s; margin-top: 10px; }
+        #recordButton { display: block; width: 100%; padding: 15px; font-size: 18px; color: white; border: none; border-radius: 5px; cursor: pointer; transition: background-color 0.3s, opacity 0.3s; margin-top: 10px; }
+        #recordButton:disabled { opacity: 0.6; cursor: not-allowed; background-color: #6c757d !important; }
+        #recordButton:disabled:hover { background-color: #6c757d !important; }
         .start { background-color: #28a745; }
-        .start:hover { background-color: #218838; }
+        .start:hover:not(:disabled) { background-color: #218838; }
         .stop { background-color: #dc3545; }
-        .stop:hover { background-color: #c82333; }
+        .stop:hover:not(:disabled) { background-color: #c82333; }
         #status { text-align: center; margin-top: 15px; font-style: italic; color: #666; min-height: 20px; }
         .error { color: #dc3545; font-weight: 600; }
         .success { color: #28a745; }
@@ -110,7 +112,7 @@
 
         <div class="divider"></div>
 
-        <button id="recordButton" class="start">🎤 Start Recording</button>
+        <button id="recordButton" class="start" disabled>🎤 Start Recording</button>
         <p id="status">Click the button above to start recording or upload an audio file.</p>
         
         <div id="progressContainer">
@@ -167,17 +169,6 @@
             progressContainer.style.display = 'none';
         }
 
-        // Show/hide custom language input based on selection
-        languageSelect.addEventListener('change', () => {
-            if (languageSelect.value === 'other') {
-                customLanguageGroup.style.display = 'block';
-                customLanguageInput.required = true;
-            } else {
-                customLanguageGroup.style.display = 'none';
-                customLanguageInput.required = false;
-                customLanguageInput.value = '';
-            }
-        });
         
         // Remove error styling from fields
         function clearFieldErrors() {
@@ -244,7 +235,8 @@
         });
 
         // Check MediaRecorder support
-        if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        const mediaRecorderSupported = navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+        if (!mediaRecorderSupported) {
             statusElement.textContent = 'Your browser does not support recording. Please use a modern browser.';
             statusElement.classList.add('error');
             recordButton.disabled = true;
@@ -255,7 +247,7 @@
         const ffmpegWarning = document.getElementById('ffmpegWarning');
         
         function checkFFmpeg() {
-            fetch('/check-ffmpeg')
+            return fetch('/check-ffmpeg')
                 .then(response => response.json())
                 .then(data => {
                     ffmpegAvailable = data.ffmpeg_available;
@@ -271,6 +263,8 @@
                             ffmpegWarning.classList.remove('show');
                         }
                     }
+                    updateRecordButtonState();
+                    return ffmpegAvailable;
                 })
                 .catch(error => {
                     console.error('Error checking FFmpeg:', error);
@@ -279,9 +273,87 @@
                     if (ffmpegWarning) {
                         ffmpegWarning.classList.add('show');
                     }
+                    updateRecordButtonState();
+                    return false;
                 });
         }
+        
+        // Function to check if recording can be started
+        function canStartRecording() {
+            // Check MediaRecorder support first
+            if (!mediaRecorderSupported) {
+                return { allowed: false, reason: 'Your browser does not support recording. Please use a modern browser.' };
+            }
+            
+            const topic = topicInput.value.trim();
+            const language = languageSelect.value;
+            const customLanguage = customLanguageInput.value.trim();
+            
+            // Check form fields
+            if (!topic) {
+                return { allowed: false, reason: 'Meeting Topic is required before starting recording!' };
+            }
+            
+            if (!language) {
+                return { allowed: false, reason: 'Conversation Language is required before starting recording!' };
+            }
+            
+            if (language === 'other' && !customLanguage) {
+                return { allowed: false, reason: 'Please specify the custom language before starting recording!' };
+            }
+            
+            // Check FFmpeg (required for Whisper transcription)
+            if (ffmpegAvailable === false) {
+                return { 
+                    allowed: false, 
+                    reason: 'FFmpeg is required for audio processing. Please install FFmpeg before starting recording. See instructions above.' 
+                };
+            }
+            
+            // If FFmpeg check is still pending, wait for it
+            if (ffmpegAvailable === null) {
+                return { allowed: false, reason: 'Checking system requirements...' };
+            }
+            
+            return { allowed: true };
+        }
+        
+        // Update record button state based on requirements
+        function updateRecordButtonState() {
+            // Don't update if MediaRecorder is not supported (button should stay disabled)
+            if (!mediaRecorderSupported) {
+                return;
+            }
+            
+            const canStart = canStartRecording();
+            if (!canStart.allowed && !isRecording) {
+                recordButton.disabled = true;
+                if (canStart.reason) {
+                    recordButton.title = canStart.reason;
+                }
+            } else if (!isRecording) {
+                recordButton.disabled = false;
+                recordButton.title = '';
+            }
+        }
+        
         checkFFmpeg(); // Check on page load
+        
+        // Update button state when form fields change
+        topicInput.addEventListener('input', updateRecordButtonState);
+        languageSelect.addEventListener('change', () => {
+            updateRecordButtonState();
+            // Also handle custom language visibility
+            if (languageSelect.value === 'other') {
+                customLanguageGroup.style.display = 'block';
+                customLanguageInput.required = true;
+            } else {
+                customLanguageGroup.style.display = 'none';
+                customLanguageInput.required = false;
+                customLanguageInput.value = '';
+            }
+        });
+        customLanguageInput.addEventListener('input', updateRecordButtonState);
 
         // Handle file upload
         fileInput.addEventListener('change', (e) => {
@@ -386,13 +458,41 @@
                 // Stop recording
                 stopRecording();
             } else {
-                // Start recording
+                // Start recording - validate first
+                const canStart = canStartRecording();
+                if (!canStart.allowed) {
+                    // Show error message
+                    statusElement.textContent = `❌ ${canStart.reason}`;
+                    statusElement.classList.add('error');
+                    
+                    // Highlight missing fields
+                    clearFieldErrors();
+                    const topic = topicInput.value.trim();
+                    const language = languageSelect.value;
+                    const customLanguage = customLanguageInput.value.trim();
+                    
+                    if (!topic) {
+                        markFieldError(topicInput, '');
+                    }
+                    if (!language) {
+                        markFieldError(languageSelect, '');
+                    }
+                    if (language === 'other' && !customLanguage) {
+                        markFieldError(customLanguageInput, '');
+                    }
+                    
+                    return;
+                }
+                
+                // All validations passed, start recording
                 await startRecording();
             }
         });
 
         async function startRecording() {
             try {
+                // Clear any previous errors
+                clearFieldErrors();
                 statusElement.textContent = 'Requesting microphone access...';
                 statusElement.classList.remove('error', 'success');
                 
@@ -437,6 +537,7 @@
                 recordButton.textContent = '⏹️ Stop Recording';
                 recordButton.classList.remove('start');
                 recordButton.classList.add('stop');
+                recordButton.disabled = false; // Ensure button is enabled when recording
                 statusElement.textContent = '🎤 Recording... Click button to stop.';
                 statusElement.classList.remove('error');
                 statusElement.classList.add('success');
@@ -462,7 +563,8 @@
         }
 
         function stopRecording() {
-            // Validate form before processing
+            // Form validation is already done before starting recording,
+            // but double-check here as well
             if (!validateForm()) {
                 // If validation fails, don't stop recording
                 return;
@@ -474,6 +576,7 @@
             recordButton.textContent = '🎤 Start Recording';
             recordButton.classList.remove('stop');
             recordButton.classList.add('start');
+            recordButton.disabled = false; // Re-enable button
             statusElement.textContent = 'Processing... Please wait.';
             statusElement.classList.remove('error', 'success');
             isRecording = false;

@@ -66,12 +66,20 @@ class WhisperModelCache:
             
             # Load the model
             logger.info(f"[WHISPER CACHE] Loading model '{model_name}'...")
+            logger.info(f"[WHISPER CACHE] This may take a while on first use (downloading model if needed)...")
             try:
                 import whisper
                 import time
+                import warnings
+                
                 load_start = time.time()
                 
-                model = whisper.load_model(model_name)
+                # Suppress warnings during model loading
+                with warnings.catch_warnings():
+                    warnings.filterwarnings("ignore", category=UserWarning)
+                    warnings.filterwarnings("ignore", message=".*FP16.*")
+                    model = whisper.load_model(model_name)
+                
                 load_duration = time.time() - load_start
                 
                 # Cache the model
@@ -79,8 +87,12 @@ class WhisperModelCache:
                 logger.info(f"[WHISPER CACHE] ✓ Model '{model_name}' loaded and cached in {load_duration:.2f} seconds")
                 
                 return model
+            except KeyboardInterrupt:
+                logger.warning(f"[WHISPER CACHE] Model loading interrupted by user")
+                raise
             except Exception as e:
                 logger.error(f"[WHISPER CACHE] ✗ Failed to load model '{model_name}': {e}")
+                logger.exception("Full error details:")
                 raise
     
     def preload_model(self, model_name: str):
@@ -98,7 +110,7 @@ class WhisperModelCache:
             except Exception as e:
                 logger.error(f"[WHISPER CACHE] ✗ Failed to preload model '{model_name}': {e}")
         
-        thread = threading.Thread(target=load_in_background, daemon=True)
+        thread = threading.Thread(target=load_in_background, daemon=True, name=f"WhisperPreload-{model_name}")
         thread.start()
         logger.info(f"[WHISPER CACHE] Started background thread to preload '{model_name}'")
     

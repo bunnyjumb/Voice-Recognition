@@ -4,20 +4,32 @@ Main application file with routes and request handling.
 """
 import traceback
 import logging
+import sys
+import signal
 from datetime import datetime
 from flask import Flask, render_template, request, jsonify, send_from_directory
 
 from config import ensure_upload_directory
 from services.audio_service import AudioService
 from services.ai_service import AIService
+from services.validation_service import ValidationService
+from services.file_cleanup_service import FileCleanupService
+from utils.ffmpeg_checker import get_ffmpeg_checker
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[
+        logging.StreamHandler(sys.stdout)
+    ]
 )
 logger = logging.getLogger(__name__)
+
+# Suppress noisy warnings
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="whisper")
 
 # Initialize Flask application
 app = Flask(__name__)
@@ -32,6 +44,22 @@ logger.info(f"Upload folder configured: {UPLOAD_FOLDER}")
 logger.info("Initializing services...")
 audio_service = AudioService(upload_folder=UPLOAD_FOLDER)
 logger.info("AudioService initialized")
+
+# Initialize validation service
+validation_service = ValidationService()
+logger.info("ValidationService initialized")
+
+# Initialize file cleanup service
+cleanup_service = FileCleanupService(upload_folder=UPLOAD_FOLDER)
+logger.info("FileCleanupService initialized")
+
+# Run initial cleanup of old files
+try:
+    deleted_count = cleanup_service.cleanup_old_files()
+    if deleted_count > 0:
+        logger.info(f"Initial cleanup: {deleted_count} old files removed")
+except Exception as e:
+    logger.warning(f"Initial cleanup failed: {e}")
 
 # Initialize AI service (this will preload Whisper models in background)
 logger.info("Initializing AIService (preloading Whisper models in background)...")
@@ -70,37 +98,23 @@ def process_audio():
             }), 500
         logger.info("✓ AI service is available")
         
-        # Step 2: Validate audio file
-        logger.info("[STEP 2/5] Validating audio file...")
-        if 'audio_data' not in request.files:
-            logger.error("No audio file found in request")
-            return jsonify({"error": "No audio file found in request"}), 400
+        # Step 2 & 3: Validate request (audio file + form data)
+        logger.info("[STEP 2/5] Validating request...")
+        is_valid, error_msg, validated_data = validation_service.validate_audio_request(
+            form_data=request.form,
+            files=request.files
+        )
+        
+        if not is_valid:
+            logger.error(f"Validation failed: {error_msg}")
+            return jsonify({"error": error_msg}), 400
         
         file = request.files['audio_data']
-        if file.filename == '':
-            logger.error("No file selected")
-            return jsonify({"error": "No file selected"}), 400
-        logger.info(f"✓ Audio file received: {file.filename}")
+        topic = validated_data['topic']
+        language = validated_data['language']
+        custom_language = validated_data['custom_language']
         
-        # Step 3: Validate form data
-        logger.info("[STEP 3/5] Validating form data...")
-        topic = request.form.get('topic', '').strip()
-        language = request.form.get('language', '').strip()
-        custom_language = request.form.get('custom_language', '').strip() or None
-        
-        if not topic:
-            logger.error("Meeting Topic is required")
-            return jsonify({"error": "Meeting Topic is required"}), 400
-        
-        if not language:
-            logger.error("Conversation Language is required")
-            return jsonify({"error": "Conversation Language is required"}), 400
-        
-        if language == 'other' and not custom_language:
-            logger.error("Custom language is required when 'Other' is selected")
-            return jsonify({"error": "Custom language is required when 'Other' is selected"}), 400
-        
-        logger.info(f"✓ Form data validated - Topic: {topic}, Language: {language}")
+        logger.info(f"✓ Request validated - File: {file.filename}, Topic: {topic}, Language: {language}")
         if custom_language:
             logger.info(f"  Custom language: {custom_language}")
         
@@ -172,7 +186,14 @@ def process_audio():
             logger.error(f"✗ Summarization failed after {summary_duration:.2f} seconds: {str(e)}")
             raise
         
-        # Step 7: Return results
+        # Step 7: Cleanup old files (async, don't block response)
+        try:
+            # Cleanup old files in background (non-blocking)
+            cleanup_service.cleanup_old_files()
+        except Exception as e:
+            logger.warning(f"Cleanup failed (non-critical): {e}")
+        
+        # Step 8: Return results
         total_duration = (datetime.now() - start_time).total_seconds()
         logger.info("=" * 60)
         logger.info(f"✓ Processing completed successfully in {total_duration:.2f} seconds")
@@ -213,9 +234,8 @@ def check_ffmpeg():
     """
     logger.info("GET /check-ffmpeg - Checking FFmpeg availability")
     try:
-        from services.audio_compressor import AudioCompressor
-        compressor = AudioCompressor()
-        ffmpeg_available = compressor._ffmpeg_available
+        ffmpeg_checker = get_ffmpeg_checker()
+        ffmpeg_available = ffmpeg_checker.is_available()
         logger.info(f"FFmpeg available: {ffmpeg_available}")
         return jsonify({
             "ffmpeg_available": ffmpeg_available,
@@ -244,5 +264,39 @@ def uploaded_file(filename):
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
 
 
+def signal_handler(sig, frame):
+    """Handle shutdown signals gracefully."""
+    logger.info("\nShutting down gracefully...")
+    sys.exit(0)
+
+
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Register signal handlers for graceful shutdown (if supported)
+    try:
+        signal.signal(signal.SIGINT, signal_handler)
+    except (ValueError, OSError):
+        # SIGINT may not be available on all platforms
+        pass
+    
+    try:
+        signal.signal(signal.SIGTERM, signal_handler)
+    except (ValueError, OSError):
+        # SIGTERM may not be available on Windows
+        pass
+    
+    try:
+        # Disable reloader to prevent issues during long-running transcription tasks
+        # Set use_reloader=False to avoid socket errors when files change during processing
+        # This is important because transcription can take several minutes
+        # Threaded=True allows handling multiple requests concurrently
+        logger.info("Starting Flask development server...")
+        logger.info("Note: Auto-reloader is disabled to prevent issues during long operations")
+        logger.info("Server will run on http://127.0.0.1:5000")
+        app.run(debug=True, use_reloader=False, threaded=True, host='127.0.0.1', port=5000)
+    except KeyboardInterrupt:
+        logger.info("\nServer stopped by user (Ctrl+C)")
+        sys.exit(0)
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+        traceback.print_exc()
+        sys.exit(1)

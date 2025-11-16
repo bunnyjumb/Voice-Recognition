@@ -19,7 +19,8 @@ Python/
 │   ├── audio_service.py           # Xử lý file audio
 │   ├── audio_compressor.py        # Nén audio files
 │   ├── audio_splitter.py          # Chia nhỏ audio files
-│   └── ai_service.py              # AI transcription & summarization
+│   ├── ai_service.py              # AI transcription & summarization
+│   └── whisper_model_cache.py     # Cache Whisper models để tối ưu performance
 ├── utils/
 │   ├── prompt_builder.py          # Tạo prompts cho AI
 │   ├── text_chunker.py            # Chia nhỏ text dài
@@ -131,10 +132,12 @@ Python/
    - **Fallback**: Nếu API fail (404), dùng local Whisper
 
 5. **Local Whisper Transcription**
-   - Load Whisper model (base/medium/large)
+   - Load Whisper model từ cache (WhisperModelCache)
+   - Models được preload khi server start (background thread)
    - Model selection:
      - Vietnamese: "medium" (better accuracy)
      - Other languages: "base" (balance speed/accuracy)
+   - Models chỉ load 1 lần, reuse cho các requests sau
    - Transcribe với language hint
    - Post-processing cho tiếng Việt (nếu cần)
 
@@ -152,8 +155,9 @@ Python/
 **Method: `_transcribe_with_local_whisper(audio_file_path, language)`**
 
 - Kiểm tra FFmpeg available
-- Load Whisper model
-- Transcribe audio
+- Load Whisper model từ cache (nếu chưa có thì load và cache)
+- Transcribe audio (CPU-intensive, có thể mất vài phút)
+- Log estimated và actual processing time
 - Post-process nếu là tiếng Việt
 - Return transcript
 
@@ -234,6 +238,13 @@ Python/
 - Thread pool execution
 - Timeout handling
 
+#### WhisperModelCache (whisper_model_cache.py)
+- Singleton cache cho Whisper models
+- Preload models khi server start
+- Thread-safe với locks
+- Reuse models across requests (không cần load lại)
+- Background preloading để tối ưu performance
+
 ## Cấu hình (config.py)
 
 ### API Configuration
@@ -282,6 +293,9 @@ Python/
 - Better accuracy
 
 ### Performance
+- **Model Caching**: Whisper models chỉ load 1 lần, reuse cho tất cả requests
+- **Preloading**: Models được preload khi server start (background thread)
+- **Fast Model Access**: Model load từ cache < 0.1s (thay vì 5+ giây)
 - Chunking để xử lý files lớn
 - Batch processing support
 - Efficient memory usage
@@ -327,8 +341,9 @@ POST /process-audio
 [Transcribe Audio] → AIService
     ├─→ [API Transcription] (if available)
     └─→ [Local Whisper] (fallback)
-        ├─→ [Load Model]
-        ├─→ [Transcribe]
+        ├─→ [Get Model from Cache] (WhisperModelCache)
+        │   └─→ [Load Model] (if not cached, then cache it)
+        ├─→ [Transcribe] (CPU-intensive)
         └─→ [Post-process] (Vietnamese)
     ↓
 [Transcript Text]
@@ -349,13 +364,18 @@ POST /process-audio
 
 ## Logging và Debugging
 
-App sử dụng `print()` statements để logging. Các log points:
-- File save operations
-- Transcription start/completion
-- Model loading
-- Chunk processing
-- Summarization steps
-- Error messages
+App sử dụng Python `logging` module và `print()` statements. Các log points:
+- **Initialization**: Server start, service initialization, model preloading
+- **File Operations**: File save, file size, file path
+- **Transcription**: 
+  - API attempts và fallback
+  - Model loading (from cache hoặc fresh load)
+  - Estimated và actual processing time
+  - Progress updates
+- **Summarization**: Chunk splitting, API calls, completion time
+- **Error Handling**: Detailed error messages với context
+
+Log format: `[MODULE] Message` để dễ theo dõi
 
 ## Performance Considerations
 
@@ -389,3 +409,259 @@ App sử dụng `print()` statements để logging. Các log points:
 - Giảm model size (base thay vì medium)
 - Giảm file size trước khi upload
 - Close other applications
+
+### Model Loading
+- Models được preload khi server start (background thread)
+- Lần đầu có thể mất vài giây để download model
+- Các lần sau: instant từ cache (< 0.1s)
+- Check logs để xem model loading status
+
+### Server Configuration
+- **Auto-reloader disabled**: Tắt để tránh lỗi socket khi đang xử lý transcription dài
+- **Threaded mode**: Cho phép xử lý nhiều requests đồng thời
+- **Warning suppression**: Tắt các warnings không cần thiết (FP16, etc.)
+- **Graceful shutdown**: Xử lý tín hiệu shutdown đúng cách
+
+---
+
+# Hướng dẫn Cài đặt và Sử dụng
+
+## Yêu cầu Hệ thống
+
+### Hệ điều hành
+- **Windows**: Windows 10/11 hoặc mới hơn
+- **Linux**: Ubuntu 18.04+ hoặc các distro tương tự
+- **macOS**: macOS 10.14+ hoặc mới hơn
+
+### Phần mềm cần thiết
+
+#### 1. Python
+- **Version**: Python 3.8 hoặc mới hơn (khuyến nghị Python 3.10+)
+- **Cách kiểm tra**: Mở terminal/cmd và chạy `python --version`
+- **Cách cài đặt**:
+  - Windows: Download từ [python.org](https://www.python.org/downloads/)
+  - Linux: `sudo apt-get install python3 python3-pip` (Ubuntu/Debian)
+  - macOS: `brew install python3` hoặc download từ python.org
+
+#### 2. FFmpeg (Bắt buộc)
+FFmpeg cần thiết cho Whisper để xử lý audio files.
+
+**Windows:**
+1. Download từ: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+2. Giải nén vào thư mục (ví dụ: `C:\ffmpeg`)
+3. Thêm vào PATH:
+   - Nhấn `Win + X` → chọn "System"
+   - Click "Advanced system settings"
+   - Click "Environment Variables"
+   - Trong "System variables", tìm "Path" → click "Edit"
+   - Click "New" → thêm: `C:\ffmpeg\bin`
+   - Click "OK" trên tất cả các hộp thoại
+4. Khởi động lại terminal/IDE
+5. Kiểm tra: `ffmpeg -version`
+
+**Linux (Ubuntu/Debian):**
+```bash
+sudo apt-get update
+sudo apt-get install ffmpeg
+```
+
+**macOS:**
+```bash
+brew install ffmpeg
+```
+
+**Hoặc dùng Chocolatey (Windows):**
+```powershell
+choco install ffmpeg
+```
+
+## Cài đặt Dependencies
+
+### Bước 1: Clone hoặc tải project
+```bash
+cd C:\Users\PhamDucDuy        \Desktop\Python
+```
+
+### Bước 2: Tạo virtual environment (khuyến nghị)
+```bash
+# Windows
+python -m venv venv
+venv\Scripts\activate
+
+# Linux/macOS
+python3 -m venv venv
+source venv/bin/activate
+```
+
+### Bước 3: Cài đặt packages
+```bash
+pip install -r requirements.txt
+```
+
+**Dependencies sẽ được cài:**
+- `flask>=2.0.0` - Web framework
+- `openai>=1.0.0` - OpenAI SDK
+- `openai-whisper>=20231117` - Local Whisper transcription
+
+**Lưu ý:**
+- Whisper sẽ tự động download models khi cần (lần đầu sử dụng)
+- Model "medium" (~1.5GB) sẽ được download cho tiếng Việt
+- Model "base" (~150MB) sẽ được download cho các ngôn ngữ khác
+- Models được lưu trong cache của Whisper (thường ở `~/.cache/whisper/`)
+
+## Cấu hình
+
+### Chỉnh sửa config.py (nếu cần)
+
+Mở file `config.py` và kiểm tra các cấu hình:
+
+```python
+# OpenAI API Configuration
+OPENAI_BASE_URL = "https://aiportalapi.stu-platform.live/use"
+OPENAI_API_KEY = "sk-6gH161QwRXLB0FmOCwxglA"
+OPENAI_MODEL_TRANSCRIPTION = "whisper-1"
+OPENAI_MODEL_SUMMARY = "GPT-5-mini"
+```
+
+**Lưu ý**: Nếu API không hỗ trợ transcription, app sẽ tự động fallback sang local Whisper.
+
+## Chạy Ứng dụng
+
+### Bước 1: Khởi động server
+```bash
+python app.py
+```
+
+Hoặc:
+```bash
+python -m flask run
+```
+
+### Bước 2: Mở trình duyệt
+Truy cập: `http://127.0.0.1:5000` hoặc `http://localhost:5000`
+
+### Bước 3: Sử dụng ứng dụng
+
+1. **Nhập thông tin:**
+   - Meeting Topic: Nhập chủ đề cuộc họp (bắt buộc)
+   - Conversation Language: Chọn ngôn ngữ (bắt buộc)
+
+2. **Upload audio:**
+   - Click "📁 Or Upload Audio File" để chọn file
+   - Hoặc click "🎤 Start Recording" để ghi âm trực tiếp
+
+3. **Xử lý:**
+   - Click "📤 Process Audio File" (nếu upload file)
+   - Hoặc click "⏹️ Stop Recording" (nếu ghi âm)
+   - Đợi quá trình xử lý hoàn tất
+
+4. **Xem kết quả:**
+   - Summary sẽ hiển thị sau khi xử lý xong
+   - Có thể download audio file đã upload
+
+## Lần đầu chạy
+
+Khi chạy lần đầu, bạn sẽ thấy:
+
+1. **Server khởi động:**
+   ```
+   [AISERVICE] Started preloading common Whisper models in background...
+   [WHISPER CACHE] Preloading model 'base' in background...
+   [WHISPER CACHE] Preloading model 'medium' in background...
+   ```
+
+2. **Models được download:**
+   - Lần đầu: Models sẽ được download (~1.5GB cho medium, ~150MB cho base)
+   - Có thể mất vài phút tùy vào tốc độ internet
+   - Models được cache, không cần download lại
+
+3. **Request đầu tiên:**
+   - Nếu model chưa preload xong, sẽ đợi model load
+   - Các request sau sẽ nhanh hơn (model đã có trong cache)
+
+## Kiểm tra Logs
+
+Khi chạy app, logs sẽ hiển thị trong terminal:
+
+```
+2025-11-16 14:49:34 - __main__ - INFO - Initializing Flask application...
+[AISERVICE] Started preloading common Whisper models in background...
+[WHISPER CACHE] Preloading model 'base' in background...
+[WHISPER CACHE] ✓ Model 'base' loaded and cached in 2.30 seconds
+```
+
+**Các log quan trọng:**
+- `[AISERVICE]` - AI service operations
+- `[WHISPER CACHE]` - Model loading và caching
+- `[LOCAL WHISPER]` - Transcription process
+- `[SUMMARIZATION]` - Summarization process
+- `[AUDIO SERVICE]` - File operations
+
+## Xử lý Lỗi Thường gặp
+
+### Lỗi: "FFmpeg is not installed"
+**Giải pháp**: Cài đặt FFmpeg theo hướng dẫn ở trên và khởi động lại terminal.
+
+### Lỗi: "ModuleNotFoundError: No module named 'whisper'"
+**Giải pháp**: 
+```bash
+pip install openai-whisper
+```
+
+### Lỗi: "API endpoint not found (404)"
+**Giải pháp**: Đây là bình thường. App sẽ tự động fallback sang local Whisper.
+
+### App treo ở 72%
+**Giải pháp**: 
+- Đây không phải lỗi, app đang transcribe audio (CPU-intensive)
+- Với file 6MB, có thể mất 8-10 phút
+- Check logs để xem progress: `[LOCAL WHISPER] Transcription started - processing audio...`
+- UI progress bar là simulated, không phản ánh thực tế
+- Đợi cho đến khi thấy log: `[LOCAL WHISPER] ✓ Transcription completed`
+
+### Lỗi: "OSError: [WinError 10038] An operation was attempted on something that is not a socket"
+**Giải pháp**: 
+- Đã được fix bằng cách tắt auto-reloader (`use_reloader=False`)
+- Lỗi này xảy ra khi Flask cố reload code trong khi đang xử lý request
+- Không chỉnh sửa code trong khi đang xử lý transcription
+
+### Memory Issues
+**Giải pháp**:
+- Đóng các ứng dụng khác
+- Giảm model size (sửa code để dùng "base" thay vì "medium")
+- Giảm file size trước khi upload
+
+## Tối ưu Performance
+
+### Cho tốc độ nhanh nhất:
+1. **Sử dụng model "base"** thay vì "medium" (sửa trong code)
+2. **Giảm file size** trước khi upload (< 5MB)
+3. **Đảm bảo FFmpeg đã cài** để tránh lỗi
+4. **Để models preload** khi server start (đã tự động)
+
+### Cho độ chính xác cao nhất (tiếng Việt):
+1. **Giữ model "medium"** (mặc định cho tiếng Việt)
+2. **File audio chất lượng tốt** (rõ ràng, ít noise)
+3. **Chọn đúng ngôn ngữ** trong form
+
+## Cấu trúc Thư mục sau khi chạy
+
+```
+Python/
+├── uploads/                    # Files audio đã upload
+│   └── recording_*.mp3
+├── __pycache__/               # Python cache files
+└── .cache/                    # Whisper model cache (tự động tạo)
+    └── whisper/
+        ├── base.pt            # Model base (~150MB)
+        └── medium.pt          # Model medium (~1.5GB)
+```
+
+## Hỗ trợ
+
+Nếu gặp vấn đề:
+1. Check logs trong terminal
+2. Kiểm tra FFmpeg đã cài đúng chưa: `ffmpeg -version`
+3. Kiểm tra Python version: `python --version`
+4. Kiểm tra dependencies: `pip list`
+5. Xem phần Troubleshooting ở trên

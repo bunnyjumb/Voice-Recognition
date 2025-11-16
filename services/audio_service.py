@@ -4,11 +4,14 @@ Handles audio file operations and management.
 """
 import os
 import time
+import logging
 from pathlib import Path
 from typing import Tuple, Optional
 from werkzeug.datastructures import FileStorage
 
 from config import UPLOAD_FOLDER
+
+logger = logging.getLogger(__name__)
 
 
 class AudioService:
@@ -41,9 +44,9 @@ class AudioService:
         Raises:
             ValueError: If file is empty or invalid
         """
-        print("[AUDIO SERVICE] Saving audio file...")
+        logger.info("Saving audio file...")
         if not file or file.filename == '':
-            print("[AUDIO SERVICE] ✗ No file provided or filename is empty")
+            logger.error("No file provided or filename is empty")
             raise ValueError("No file provided or filename is empty")
         
         # Generate unique filename with timestamp
@@ -53,20 +56,20 @@ class AudioService:
         filename = f"recording_{timestamp}{file_extension}"
         filepath = os.path.join(self.upload_folder, filename)
         
-        print(f"[AUDIO SERVICE] Original filename: {original_filename}")
-        print(f"[AUDIO SERVICE] Generated filename: {filename}")
-        print(f"[AUDIO SERVICE] Filepath: {filepath}")
+        logger.debug(f"Original filename: {original_filename}")
+        logger.debug(f"Generated filename: {filename}")
+        logger.debug(f"Filepath: {filepath}")
         
         # Save file
         file.save(filepath)
         
         if not os.path.exists(filepath):
-            print(f"[AUDIO SERVICE] ✗ Failed to save file to {filepath}")
+            logger.error(f"Failed to save file to {filepath}")
             raise IOError(f"Failed to save file to {filepath}")
         
         file_size = os.path.getsize(filepath)
         file_size_mb = file_size / (1024 * 1024)
-        print(f"[AUDIO SERVICE] ✓ File saved successfully ({file_size_mb:.2f}MB)")
+        logger.info(f"File saved successfully ({file_size_mb:.2f}MB)")
         
         return filepath, filename
     

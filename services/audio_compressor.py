@@ -3,10 +3,14 @@ Audio Compressor Module
 Handles compressing large audio files to fit within API limits.
 """
 import os
-import subprocess
 import tempfile
+import logging
 from pathlib import Path
 from typing import Optional, Tuple
+
+from utils.ffmpeg_checker import get_ffmpeg_checker
+
+logger = logging.getLogger(__name__)
 
 
 class AudioCompressor:
@@ -23,20 +27,8 @@ class AudioCompressor:
     
     def __init__(self):
         """Initialize AudioCompressor."""
-        self._ffmpeg_available = self._check_ffmpeg()
-    
-    def _check_ffmpeg(self) -> bool:
-        """Check if ffmpeg is available in system."""
-        try:
-            subprocess.run(
-                ['ffmpeg', '-version'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                timeout=5
-            )
-            return True
-        except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
-            return False
+        self._ffmpeg_checker = get_ffmpeg_checker()
+        self._ffmpeg_available = self._ffmpeg_checker.is_available()
     
     def compress_audio(
         self,
@@ -74,13 +66,10 @@ class AudioCompressor:
             # Don't raise error here, let caller handle it
             error_msg = (
                 "FFmpeg is required to compress large audio files.\n\n"
-                "Please install FFmpeg to enable automatic compression:\n"
-                "- Windows: Download from https://ffmpeg.org/download.html or use 'choco install ffmpeg'\n"
-                "- Linux: 'sudo apt-get install ffmpeg' (Ubuntu/Debian)\n"
-                "- Mac: 'brew install ffmpeg'\n\n"
-                "Alternatively, compress your audio file manually before uploading."
+                + self._ffmpeg_checker.get_installation_instructions() +
+                "\n\nAlternatively, compress your audio file manually before uploading."
             )
-            print("FFmpeg not available, compression skipped")
+            logger.warning("FFmpeg not available, compression skipped")
             return audio_file_path, False, error_msg
         
         # Create output path if not provided
@@ -91,13 +80,13 @@ class AudioCompressor:
             temp_name = f"compressed_{os.path.basename(audio_file_path)}"
             output_path = os.path.join(temp_dir, temp_name)
         
-        print(f"Compressing audio file from {file_size / (1024*1024):.2f}MB...")
+        logger.info(f"Compressing audio file from {file_size / (1024*1024):.2f}MB...")
         
         # Try compression presets from high to low (more aggressive to less aggressive)
         compressed = False
         for preset_name in ['high', 'medium', 'low']:
             preset = self.COMPRESSION_PRESETS[preset_name]
-            print(f"Trying compression preset: {preset_name} (bitrate: {preset['bitrate']})...")
+            logger.info(f"Trying compression preset: {preset_name} (bitrate: {preset['bitrate']})...")
             
             try:
                 # Use ffmpeg to compress
@@ -122,7 +111,7 @@ class AudioCompressor:
                 # Check if compression was successful and file size is acceptable
                 if os.path.exists(output_path):
                     compressed_size = os.path.getsize(output_path)
-                    print(f"Compressed to {compressed_size / (1024*1024):.2f}MB using preset '{preset_name}'")
+                    logger.info(f"Compressed to {compressed_size / (1024*1024):.2f}MB using preset '{preset_name}'")
                     
                     if compressed_size <= target_size:
                         compressed = True
@@ -130,7 +119,7 @@ class AudioCompressor:
                     elif compressed_size < file_size:
                         # Smaller than original but still too large
                         # Try next preset
-                        print(f"Still too large ({compressed_size / (1024*1024):.2f}MB), trying more aggressive compression...")
+                        logger.info(f"Still too large ({compressed_size / (1024*1024):.2f}MB), trying more aggressive compression...")
                         continue
                     else:
                         # Compression made it larger, use original
@@ -139,16 +128,16 @@ class AudioCompressor:
                         
             except subprocess.CalledProcessError as e:
                 error_msg = e.stderr.decode() if e.stderr else str(e)
-                print(f"Compression with preset '{preset_name}' failed: {error_msg}")
+                logger.warning(f"Compression with preset '{preset_name}' failed: {error_msg}")
                 # Try next preset
                 continue
             except Exception as e:
-                print(f"Error during compression: {str(e)}")
+                logger.warning(f"Error during compression: {str(e)}")
                 continue
         
         if not compressed:
             # If all presets failed or didn't reduce size enough, try adaptive bitrate
-            print("Trying adaptive bitrate compression...")
+            logger.info("Trying adaptive bitrate compression...")
             try:
                 # Calculate target bitrate based on file size
                 # Rough estimate: bitrate (kbps) ≈ file_size (MB) * 8 / duration (seconds) * 1000
@@ -178,10 +167,10 @@ class AudioCompressor:
                     compressed_size = os.path.getsize(output_path)
                     if compressed_size <= target_size * 1.1:  # Allow 10% tolerance
                         compressed = True
-                        print(f"Compressed to {compressed_size / (1024*1024):.2f}MB using adaptive bitrate")
+                        logger.info(f"Compressed to {compressed_size / (1024*1024):.2f}MB using adaptive bitrate")
             
             except Exception as e:
-                print(f"Adaptive compression failed: {str(e)}")
+                logger.warning(f"Adaptive compression failed: {str(e)}")
         
         if not compressed:
             error_msg = (
@@ -199,6 +188,7 @@ class AudioCompressor:
         try:
             if os.path.exists(file_path) and 'compressed_' in file_path:
                 os.remove(file_path)
-        except Exception:
-            pass
+                logger.debug(f"Cleaned up temp compressed file: {file_path}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temp file {file_path}: {e}")
 

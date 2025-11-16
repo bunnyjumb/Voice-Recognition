@@ -17,6 +17,7 @@ Features:
 """
 import os
 import openai
+import logging
 from typing import Optional, Dict, Any, List
 from config import (
     OPENAI_BASE_URL,
@@ -26,6 +27,9 @@ from config import (
     LANGUAGE_MAP,
     MAX_CHARS_PER_CHUNK
 )
+from utils.ffmpeg_checker import get_ffmpeg_checker
+
+logger = logging.getLogger(__name__)
 
 
 class AIService:
@@ -66,9 +70,9 @@ class AIService:
             from services.whisper_model_cache import get_model_cache
             cache = get_model_cache()
             cache.preload_common_models()
-            print("[AISERVICE] Started preloading common Whisper models in background...")
+            logger.info("Started preloading common Whisper models in background...")
         except Exception as e:
-            print(f"[AISERVICE] Warning: Could not preload models: {e}")
+            logger.warning(f"Could not preload models: {e}")
             # Continue without preloading - models will be loaded on demand
     
     def _initialize_client(self) -> Optional[openai.OpenAI]:
@@ -94,11 +98,11 @@ class AIService:
                 base_url=OPENAI_BASE_URL,
                 api_key=OPENAI_API_KEY
             )
-            print(f"OpenAI client initialized successfully with base URL: {OPENAI_BASE_URL}")
+            logger.info(f"OpenAI client initialized successfully with base URL: {OPENAI_BASE_URL}")
             return client
         except Exception as e:
             # Log error but don't raise - allow fallback to local Whisper
-            print(f"Error initializing OpenAI client: {e}")
+            logger.error(f"Error initializing OpenAI client: {e}")
             return None
     
     def is_available(self) -> bool:
@@ -141,7 +145,7 @@ class AIService:
             return self._transcribe_single_file(audio_file_path, language)
         
         # File is too large, try to compress first
-        print(f"File is large ({file_size / (1024*1024):.2f}MB). Attempting compression...")
+        logger.info(f"File is large ({file_size / (1024*1024):.2f}MB). Attempting compression...")
         
         compressed_file = None
         compression_error = None
@@ -153,15 +157,15 @@ class AIService:
             
             if error_msg:
                 compression_error = error_msg
-                print("Compression not available:", error_msg.split('\n')[0])
+                logger.warning(f"Compression not available: {error_msg.split(chr(10))[0]}")
             
             if was_compressed:
                 compressed_size = os.path.getsize(compressed_file)
-                print(f"Successfully compressed to {compressed_size / (1024*1024):.2f}MB")
+                logger.info(f"Successfully compressed to {compressed_size / (1024*1024):.2f}MB")
                 
                 # If compressed file is still too large, split it
                 if compressed_size > max_size:
-                    print("Compressed file still too large, splitting into chunks...")
+                    logger.info("Compressed file still too large, splitting into chunks...")
                     audio_file_path = compressed_file  # Use compressed file for splitting
                 else:
                     # Compressed file is small enough, use it directly
@@ -172,8 +176,8 @@ class AIService:
                         return result
                     except Exception as e:
                         # If transcription fails, try splitting
-                        print(f"Transcription of compressed file failed: {str(e)}")
-                        print("Falling back to splitting...")
+                        logger.warning(f"Transcription of compressed file failed: {str(e)}")
+                        logger.info("Falling back to splitting...")
             else:
                 # Compression not needed or failed
                 if compressed_file != audio_file_path:
@@ -181,12 +185,13 @@ class AIService:
                     compressor.cleanup_temp_file(compressed_file)
                 compressed_file = None
         except Exception as e:
-            print(f"Compression error: {str(e)}")
+            logger.warning(f"Compression error: {str(e)}")
             compression_error = str(e)
             compressed_file = None
         
         # Check if FFmpeg is available before attempting to split
-        if not self._check_ffmpeg_available():
+        ffmpeg_checker = get_ffmpeg_checker()
+        if not ffmpeg_checker.is_available():
             # Build comprehensive error message
             error_details = [
                 "Audio file is too large and FFmpeg is not installed.\n",
@@ -212,72 +217,74 @@ class AIService:
             raise RuntimeError("\n".join(error_details))
         
         # File is too large, split it
-        print(f"Splitting file into chunks...")
+        logger.info("Splitting file into chunks...")
         from services.audio_splitter import AudioSplitter
         
         splitter = AudioSplitter()
         chunk_files = splitter.split_audio_file(audio_file_path if compressed_file is None else compressed_file)
         
-        print(f"Split into {len(chunk_files)} chunks")
+        logger.info(f"Split into {len(chunk_files)} chunks")
         
         # Transcribe each chunk with better error handling
         transcripts = []
         successful_chunks = 0
         failed_chunks = 0
+        temp_chunk_files = []  # Track temp files for cleanup
         
         for i, chunk_file in enumerate(chunk_files, 1):
-            print(f"Transcribing chunk {i}/{len(chunk_files)}...")
+            logger.info(f"Transcribing chunk {i}/{len(chunk_files)}...")
             
             # Validate chunk file before transcribing
             if not os.path.exists(chunk_file):
-                print(f"Warning: Chunk {i} file does not exist, skipping...")
+                logger.warning(f"Chunk {i} file does not exist, skipping...")
                 failed_chunks += 1
                 continue
             
             chunk_size = os.path.getsize(chunk_file)
             if chunk_size == 0:
-                print(f"Warning: Chunk {i} is empty, skipping...")
+                logger.warning(f"Chunk {i} is empty, skipping...")
                 failed_chunks += 1
                 continue
             
             if chunk_size > self.max_chunk_size * 1.1:  # Allow 10% tolerance
-                print(f"Warning: Chunk {i} is too large ({chunk_size / (1024*1024):.2f}MB), skipping...")
+                logger.warning(f"Chunk {i} is too large ({chunk_size / (1024*1024):.2f}MB), skipping...")
                 failed_chunks += 1
                 continue
+            
+            # Track temp files for cleanup
+            if chunk_file != audio_file_path and '_chunk_' in chunk_file:
+                temp_chunk_files.append(chunk_file)
             
             try:
                 chunk_transcript = self._transcribe_single_file(chunk_file, language)
                 if chunk_transcript and chunk_transcript.strip():
                     transcripts.append(chunk_transcript)
                     successful_chunks += 1
-                    print(f"✓ Successfully transcribed chunk {i}")
+                    logger.info(f"Successfully transcribed chunk {i}")
                 else:
-                    print(f"Warning: Chunk {i} returned empty transcript")
+                    logger.warning(f"Chunk {i} returned empty transcript")
                     failed_chunks += 1
             except Exception as e:
                 error_msg = str(e)
                 # Check for specific error types
                 if '404' in error_msg or 'Not Found' in error_msg:
-                    print(f"Warning: Chunk {i} may be invalid or corrupt (404 error). This can happen if FFmpeg is not available. Skipping...")
+                    logger.warning(f"Chunk {i} may be invalid or corrupt (404 error). This can happen if FFmpeg is not available. Skipping...")
                 elif 'format' in error_msg.lower():
-                    print(f"Warning: Chunk {i} format issue: {error_msg}")
+                    logger.warning(f"Chunk {i} format issue: {error_msg}")
                 else:
-                    print(f"Warning: Failed to transcribe chunk {i}: {error_msg}")
+                    logger.warning(f"Failed to transcribe chunk {i}: {error_msg}")
                 failed_chunks += 1
-            finally:
-                # Clean up chunk file if it's a temporary split
-                if chunk_file != audio_file_path and '_chunk_' in chunk_file:
-                    try:
-                        os.remove(chunk_file)
-                    except Exception:
-                        pass
+        
+        # Clean up temp chunk files
+        if temp_chunk_files:
+            splitter.cleanup_chunks(temp_chunk_files)
         
         # Check if we got any successful transcriptions
         if not transcripts:
             error_details = []
             if failed_chunks == len(chunk_files):
                 error_details.append("All chunks failed to transcribe.")
-            if not self._check_ffmpeg_available():
+            if not ffmpeg_checker.is_available():
                 error_details.append("FFmpeg may not be installed. Audio splitting requires FFmpeg to create valid chunks.")
             error_details.append("Please ensure:")
             error_details.append("1. Your audio file is not corrupted")
@@ -294,10 +301,10 @@ class AIService:
         
         # Combine all transcripts
         combined_transcript = " ".join(transcripts)
-        print(f"Successfully transcribed {successful_chunks}/{len(chunk_files)} chunks")
+        logger.info(f"Successfully transcribed {successful_chunks}/{len(chunk_files)} chunks")
         
         if failed_chunks > 0:
-            print(f"Warning: {failed_chunks} chunks failed, but continuing with {successful_chunks} successful transcriptions")
+            logger.warning(f"{failed_chunks} chunks failed, but continuing with {successful_chunks} successful transcriptions")
         
         # Clean up compressed file if used
         if compressed_file and compressed_file != audio_file_path:
@@ -305,19 +312,10 @@ class AIService:
                 from services.audio_compressor import AudioCompressor
                 compressor = AudioCompressor()
                 compressor.cleanup_temp_file(compressed_file)
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning(f"Failed to cleanup compressed file: {e}")
         
         return combined_transcript
-    
-    def _check_ffmpeg_available(self) -> bool:
-        """Check if FFmpeg is available."""
-        try:
-            from services.audio_splitter import AudioSplitter
-            splitter = AudioSplitter()
-            return splitter._ffmpeg_available
-        except Exception:
-            return False
     
     def _transcribe_single_file(
         self,
@@ -352,7 +350,7 @@ class AIService:
                 f"Supported formats: {', '.join(supported_formats)}"
             )
         
-        print(f"Transcribing file: {audio_file_path} ({file_size / (1024*1024):.2f}MB, format: {file_ext})")
+        logger.info(f"Transcribing file: {audio_file_path} ({file_size / (1024*1024):.2f}MB, format: {file_ext})")
         
         # Try API first
         api_failed = False
@@ -375,14 +373,14 @@ class AIService:
                     if language and language in LANGUAGE_MAP:
                         transcription_params["language"] = LANGUAGE_MAP[language]
                     
-                    print(f"Attempting API transcription with model: {OPENAI_MODEL_TRANSCRIPTION}")
+                    logger.info(f"Attempting API transcription with model: {OPENAI_MODEL_TRANSCRIPTION}")
                     if language and language in LANGUAGE_MAP:
-                        print(f"Language specified: {LANGUAGE_MAP[language]}")
-                    print(f"Base URL: {OPENAI_BASE_URL}")
+                        logger.debug(f"Language specified: {LANGUAGE_MAP[language]}")
+                    logger.debug(f"Base URL: {OPENAI_BASE_URL}")
                     
                     try:
                         # Standard OpenAI API call
-                        print("[API] Calling OpenAI Whisper API...")
+                        logger.info("[API] Calling OpenAI Whisper API...")
                         import time
                         api_start = time.time()
                         transcript_response = self.client.audio.transcriptions.create(
@@ -391,7 +389,7 @@ class AIService:
                         api_duration = time.time() - api_start
                         
                         if hasattr(transcript_response, 'text') and transcript_response.text:
-                            print(f"[API] ✓ API transcription successful in {api_duration:.2f} seconds")
+                            logger.info(f"[API] API transcription successful in {api_duration:.2f} seconds")
                             return transcript_response.text
                         else:
                             raise RuntimeError("API returned empty transcript")
@@ -401,14 +399,14 @@ class AIService:
                         if error_code == 404:
                             api_failed = True
                             api_error = "API endpoint not found (404)"
-                            print(f"⚠ API transcription failed: {api_error}")
-                            print("Falling back to local Whisper transcription...")
+                            logger.warning(f"API transcription failed: {api_error}")
+                            logger.info("Falling back to local Whisper transcription...")
                         else:
                             # For other API errors, try alternative URL first
                             try:
                                 if not OPENAI_BASE_URL.endswith('/v1'):
                                     alt_base_url = f"{OPENAI_BASE_URL.rstrip('/')}/v1"
-                                    print(f"Trying alternative base URL: {alt_base_url}")
+                                    logger.info(f"Trying alternative base URL: {alt_base_url}")
                                     alt_client = openai.OpenAI(
                                         base_url=alt_base_url,
                                         api_key=OPENAI_API_KEY
@@ -422,7 +420,7 @@ class AIService:
                                         alt_params["language"] = LANGUAGE_MAP[language]
                                     transcript_response = alt_client.audio.transcriptions.create(**alt_params)
                                     if hasattr(transcript_response, 'text') and transcript_response.text:
-                                        print("✓ Alternative API URL successful")
+                                        logger.info("Alternative API URL successful")
                                         return transcript_response.text
                             except Exception:
                                 pass
@@ -430,27 +428,27 @@ class AIService:
                             # If alternative URL also failed, fall back to local
                             api_failed = True
                             api_error = f"API error (Status: {error_code}): {str(e)}"
-                            print(f"⚠ API transcription failed: {api_error}")
-                            print("Falling back to local Whisper transcription...")
+                            logger.warning(f"API transcription failed: {api_error}")
+                            logger.info("Falling back to local Whisper transcription...")
                             
                     except Exception as e:
                         error_msg = str(e)
                         if '404' in error_msg or 'not found' in error_msg.lower():
                             api_failed = True
                             api_error = "API endpoint not found"
-                            print(f"⚠ API transcription failed: {api_error}")
-                            print("Falling back to local Whisper transcription...")
+                            logger.warning(f"API transcription failed: {api_error}")
+                            logger.info("Falling back to local Whisper transcription...")
                         else:
                             # For other errors, still try local as fallback
                             api_failed = True
                             api_error = f"API error: {error_msg}"
-                            print(f"⚠ API transcription failed: {api_error}")
-                            print("Falling back to local Whisper transcription...")
+                            logger.warning(f"API transcription failed: {api_error}")
+                            logger.info("Falling back to local Whisper transcription...")
             except Exception as e:
                 api_failed = True
                 api_error = str(e)
-                print(f"⚠ API transcription failed: {api_error}")
-                print("Falling back to local Whisper transcription...")
+                logger.warning(f"API transcription failed: {api_error}")
+                logger.info("Falling back to local Whisper transcription...")
         
         # If API failed or not available, use local Whisper
         if api_failed or not self.is_available():
@@ -510,31 +508,19 @@ class AIService:
             )
         
         # Check if FFmpeg is available (Whisper requires it)
-        ffmpeg_available = self._check_ffmpeg_available()
-        if not ffmpeg_available:
+        ffmpeg_checker = get_ffmpeg_checker()
+        if not ffmpeg_checker.is_available():
             raise RuntimeError(
                 "FFmpeg is not installed. Whisper requires FFmpeg to process audio files.\n\n"
-                "Please install FFmpeg:\n"
-                "1. Download from: https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip\n"
-                "2. Extract to a folder (e.g., C:\\ffmpeg)\n"
-                "3. Add C:\\ffmpeg\\bin to your PATH environment variable:\n"
-                "   - Press Win + X, select 'System'\n"
-                "   - Click 'Advanced system settings'\n"
-                "   - Click 'Environment Variables'\n"
-                "   - Under 'System variables', find 'Path' and click 'Edit'\n"
-                "   - Click 'New' and add: C:\\ffmpeg\\bin\n"
-                "   - Click 'OK' on all dialogs\n"
-                "4. Restart your terminal/IDE\n"
-                "5. Verify by running: ffmpeg -version\n\n"
-                "After installing FFmpeg, restart the application and try again."
+                + ffmpeg_checker.get_installation_instructions()
             )
         
-        print("=" * 60)
-        print("[LOCAL WHISPER] Starting local Whisper transcription...")
-        print(f"[LOCAL WHISPER] Audio file: {audio_file_path}")
-        print(f"[LOCAL WHISPER] File size: {file_size / (1024*1024):.2f}MB")
-        print("[LOCAL WHISPER] Note: First-time use will download the model (~1.5GB)")
-        print("=" * 60)
+        logger.info("=" * 60)
+        logger.info("[LOCAL WHISPER] Starting local Whisper transcription...")
+        logger.info(f"[LOCAL WHISPER] Audio file: {audio_file_path}")
+        logger.info(f"[LOCAL WHISPER] File size: {file_size / (1024*1024):.2f}MB")
+        logger.info("[LOCAL WHISPER] Note: First-time use will download the model (~1.5GB)")
+        logger.info("=" * 60)
         
         try:
             # Load Whisper model - use larger model for Vietnamese for better accuracy
@@ -543,11 +529,11 @@ class AIService:
             # 'medium' is a good balance between accuracy and speed
             if language == 'vi':
                 model_name = "medium"  # Better accuracy for Vietnamese
-                print("[LOCAL WHISPER] Using 'medium' model for Vietnamese (better accuracy)")
+                logger.info("[LOCAL WHISPER] Using 'medium' model for Vietnamese (better accuracy)")
             else:
                 model_name = "base"  # Good balance for other languages
-            print(f"[LOCAL WHISPER] Loading Whisper model: {model_name}...")
-            print("[LOCAL WHISPER] This may take a while on first use (downloading model)...")
+            logger.info(f"[LOCAL WHISPER] Loading Whisper model: {model_name}...")
+            logger.info("[LOCAL WHISPER] This may take a while on first use (downloading model)...")
             
             # Use cached model instead of loading every time
             from services.whisper_model_cache import get_model_cache
@@ -561,9 +547,9 @@ class AIService:
                 model_load_duration = time.time() - model_load_start
                 
                 if model_load_duration < 0.1:
-                    print(f"[LOCAL WHISPER] ✓ Model '{model_name}' loaded from cache (instant)")
+                    logger.info(f"[LOCAL WHISPER] Model '{model_name}' loaded from cache (instant)")
                 else:
-                    print(f"[LOCAL WHISPER] ✓ Model '{model_name}' loaded in {model_load_duration:.2f} seconds")
+                    logger.info(f"[LOCAL WHISPER] Model '{model_name}' loaded in {model_load_duration:.2f} seconds")
             except Exception as model_error:
                 error_msg = str(model_error)
                 if "WinError 2" in error_msg or "cannot find the file" in error_msg.lower():
@@ -587,38 +573,55 @@ class AIService:
             if language and language in LANGUAGE_MAP:
                 whisper_language = LANGUAGE_MAP[language]
             
-            print(f"[LOCAL WHISPER] Starting transcription...")
+            logger.info("[LOCAL WHISPER] Starting transcription...")
             if whisper_language:
-                print(f"[LOCAL WHISPER] Language: {whisper_language}")
+                logger.info(f"[LOCAL WHISPER] Language: {whisper_language}")
             
             # Estimate processing time (rough estimate: ~1-2 minutes per MB for medium model on CPU)
             estimated_time_min = (file_size / (1024 * 1024)) * 1.5  # ~1.5 min per MB
-            print(f"[LOCAL WHISPER] Estimated processing time: ~{estimated_time_min:.1f} minutes")
-            print("[LOCAL WHISPER] This is CPU-intensive and may take a while...")
-            print("[LOCAL WHISPER] Please be patient - transcription is in progress...")
+            logger.info(f"[LOCAL WHISPER] Estimated processing time: ~{estimated_time_min:.1f} minutes")
+            logger.info("[LOCAL WHISPER] This is CPU-intensive and may take a while...")
+            logger.info("[LOCAL WHISPER] Please be patient - transcription is in progress...")
             
             # Transcribe - use absolute path to avoid path issues
             import time
             transcribe_start = time.time()
-            last_log_time = transcribe_start
             
-            # Start transcription in a way that allows periodic logging
+            # Start transcription
             try:
-                # Note: Whisper transcribe is blocking, so we can't get real-time progress
-                # But we can log periodically using a separate thread or just log start/end
-                print("[LOCAL WHISPER] Transcription started - processing audio...")
+                # Note: Whisper transcribe is blocking and CPU-intensive
+                # It may take several minutes depending on file size and CPU speed
+                logger.info("[LOCAL WHISPER] Transcription started - processing audio...")
+                logger.info("[LOCAL WHISPER] This is a blocking operation - please wait...")
                 
-                result = model.transcribe(
-                    audio_file_path,
-                    language=whisper_language,
-                    task="transcribe",
-                    verbose=False  # Reduce noise
-                )
+                # Suppress warnings during transcription to reduce noise
+                import warnings
+                with warnings.catch_warnings():
+                    # Suppress FP16 warning and other user warnings
+                    warnings.filterwarnings("ignore", category=UserWarning)
+                    warnings.filterwarnings("ignore", message=".*FP16.*")
+                    
+                    # Transcribe with error handling
+                    try:
+                        # Note: fp16 parameter may not be available in all Whisper versions
+                        # Whisper automatically uses FP32 on CPU, so we don't need to specify it
+                        result = model.transcribe(
+                            audio_file_path,
+                            language=whisper_language,
+                            task="transcribe",
+                            verbose=False  # Reduce noise - we handle our own logging
+                        )
+                    except KeyboardInterrupt:
+                        logger.warning("\n[LOCAL WHISPER] Transcription interrupted by user")
+                        raise
+                    except Exception as transcribe_error:
+                        logger.error(f"[LOCAL WHISPER] Transcription error: {str(transcribe_error)}")
+                        raise RuntimeError(f"Transcription failed: {str(transcribe_error)}")
                 
                 transcribe_duration = time.time() - transcribe_start
                 minutes = int(transcribe_duration // 60)
                 seconds = int(transcribe_duration % 60)
-                print(f"[LOCAL WHISPER] ✓ Transcription completed in {minutes}m {seconds}s ({transcribe_duration:.2f} seconds)")
+                logger.info(f"[LOCAL WHISPER] Transcription completed in {minutes}m {seconds}s ({transcribe_duration:.2f} seconds)")
             except FileNotFoundError as fnf_error:
                 error_msg = str(fnf_error)
                 if "ffmpeg" in error_msg.lower() or "ffprobe" in error_msg.lower():
@@ -653,20 +656,20 @@ class AIService:
             
             # Post-process transcript for Vietnamese to improve accuracy
             if language == 'vi':
-                print("[LOCAL WHISPER] Applying Vietnamese post-processing...")
+                logger.info("[LOCAL WHISPER] Applying Vietnamese post-processing...")
                 try:
                     from utils.vietnamese_postprocessor import VietnamesePostProcessor
                     post_processor = VietnamesePostProcessor()
                     transcript = post_processor.post_process(transcript)
-                    print("[LOCAL WHISPER] ✓ Applied Vietnamese post-processing")
+                    logger.info("[LOCAL WHISPER] Applied Vietnamese post-processing")
                 except Exception as e:
-                    print(f"[LOCAL WHISPER] Warning: Vietnamese post-processing failed: {e}")
+                    logger.warning(f"[LOCAL WHISPER] Vietnamese post-processing failed: {e}")
                     # Continue with original transcript if post-processing fails
             
-            print("=" * 60)
-            print("[LOCAL WHISPER] ✓ Transcription successful")
-            print(f"[LOCAL WHISPER] Transcript length: {len(transcript)} characters")
-            print("=" * 60)
+            logger.info("=" * 60)
+            logger.info("[LOCAL WHISPER] Transcription successful")
+            logger.info(f"[LOCAL WHISPER] Transcript length: {len(transcript)} characters")
+            logger.info("=" * 60)
             return transcript
             
         except RuntimeError:
@@ -740,15 +743,15 @@ class AIService:
         if not self.is_available():
             raise RuntimeError("OpenAI client is not initialized")
         
-        print("[SUMMARIZATION] Starting summarization process...")
-        print(f"[SUMMARIZATION] Transcript length: {len(transcript)} characters")
-        print(f"[SUMMARIZATION] Topic: {topic}")
-        print(f"[SUMMARIZATION] Language: {language}")
+        logger.info("[SUMMARIZATION] Starting summarization process...")
+        logger.info(f"[SUMMARIZATION] Transcript length: {len(transcript)} characters")
+        logger.info(f"[SUMMARIZATION] Topic: {topic}")
+        logger.info(f"[SUMMARIZATION] Language: {language}")
         
         # Check if transcript is too long and needs chunking
         if len(transcript) <= MAX_CHARS_PER_CHUNK:
             # Short transcript - summarize directly
-            print("[SUMMARIZATION] Transcript is short, summarizing directly...")
+            logger.info("[SUMMARIZATION] Transcript is short, summarizing directly...")
             return self._summarize_single_chunk(
                 transcript=transcript,
                 topic=topic,
@@ -757,7 +760,7 @@ class AIService:
             )
         else:
             # Long transcript - use chunked summarization
-            print(f"[SUMMARIZATION] Transcript is long ({len(transcript)} chars). Using chunked summarization...")
+            logger.info(f"[SUMMARIZATION] Transcript is long ({len(transcript)} chars). Using chunked summarization...")
             return self._summarize_chunked(
                 transcript=transcript,
                 topic=topic,
@@ -784,7 +787,7 @@ class AIService:
         Returns:
             Summary text
         """
-        print("[SUMMARIZATION] Building prompts...")
+        logger.info("[SUMMARIZATION] Building prompts...")
         from utils.prompt_builder import PromptBuilder
         
         prompt_builder = PromptBuilder()
@@ -794,10 +797,10 @@ class AIService:
             language=language,
             custom_language=custom_language
         )
-        print("[SUMMARIZATION] ✓ Prompts built")
+        logger.info("[SUMMARIZATION] Prompts built")
         
         try:
-            print(f"[SUMMARIZATION] Calling OpenAI API with model: {OPENAI_MODEL_SUMMARY}...")
+            logger.info(f"[SUMMARIZATION] Calling OpenAI API with model: {OPENAI_MODEL_SUMMARY}...")
             import time
             api_start = time.time()
             response = self.client.chat.completions.create(
@@ -808,10 +811,10 @@ class AIService:
                 ]
             )
             api_duration = time.time() - api_start
-            print(f"[SUMMARIZATION] ✓ API call completed in {api_duration:.2f} seconds")
+            logger.info(f"[SUMMARIZATION] API call completed in {api_duration:.2f} seconds")
             return response.choices[0].message.content
         except Exception as e:
-            print(f"[SUMMARIZATION] ✗ API call failed: {str(e)}")
+            logger.error(f"[SUMMARIZATION] API call failed: {str(e)}")
             raise RuntimeError(f"Summarization failed: {str(e)}")
     
     def _summarize_chunked(
@@ -842,16 +845,16 @@ class AIService:
         from utils.prompt_builder import PromptBuilder
         
         # Split transcript into chunks
-        print("[SUMMARIZATION] Splitting transcript into chunks...")
+        logger.info("[SUMMARIZATION] Splitting transcript into chunks...")
         chunker = TextChunker()
         chunks = chunker.chunk_text(transcript)
-        print(f"[SUMMARIZATION] ✓ Split transcript into {len(chunks)} chunks")
+        logger.info(f"[SUMMARIZATION] Split transcript into {len(chunks)} chunks")
         
         # Summarize each chunk
         chunk_summaries: List[str] = []
         import time
         for i, chunk in enumerate(chunks, 1):
-            print(f"[SUMMARIZATION] Processing chunk {i}/{len(chunks)}...")
+            logger.info(f"[SUMMARIZATION] Processing chunk {i}/{len(chunks)}...")
             chunk_start = time.time()
             chunk_summary = self._summarize_single_chunk(
                 transcript=chunk,
@@ -860,7 +863,7 @@ class AIService:
                 custom_language=custom_language
             )
             chunk_duration = time.time() - chunk_start
-            print(f"[SUMMARIZATION] ✓ Chunk {i}/{len(chunks)} completed in {chunk_duration:.2f} seconds")
+            logger.info(f"[SUMMARIZATION] Chunk {i}/{len(chunks)} completed in {chunk_duration:.2f} seconds")
             chunk_summaries.append(chunk_summary)
         
         # If we only have one chunk summary, return it
@@ -868,15 +871,15 @@ class AIService:
             return chunk_summaries[0]
         
         # Combine chunk summaries into final summary
-        print(f"[SUMMARIZATION] Combining {len(chunk_summaries)} chunk summaries into final summary...")
+        logger.info(f"[SUMMARIZATION] Combining {len(chunk_summaries)} chunk summaries into final summary...")
         combined_summaries = "\n\n---\n\n".join([
             f"Section {i+1} Summary:\n{summary}"
             for i, summary in enumerate(chunk_summaries)
         ])
-        print(f"[SUMMARIZATION] ✓ Combined summaries length: {len(combined_summaries)} characters")
+        logger.info(f"[SUMMARIZATION] Combined summaries length: {len(combined_summaries)} characters")
         
         # Create prompt for final summary
-        print("[SUMMARIZATION] Building final summary prompt...")
+        logger.info("[SUMMARIZATION] Building final summary prompt...")
         prompt_builder = PromptBuilder()
         # Get language name (using the same logic as PromptBuilder)
         if language == 'other' and custom_language:
@@ -917,7 +920,7 @@ Section Summaries:
 Please provide the final comprehensive summary:"""
         
         try:
-            print(f"[SUMMARIZATION] Calling OpenAI API for final summary with model: {OPENAI_MODEL_SUMMARY}...")
+            logger.info(f"[SUMMARIZATION] Calling OpenAI API for final summary with model: {OPENAI_MODEL_SUMMARY}...")
             final_start = time.time()
             response = self.client.chat.completions.create(
                 model=OPENAI_MODEL_SUMMARY,
@@ -927,9 +930,9 @@ Please provide the final comprehensive summary:"""
                 ]
             )
             final_duration = time.time() - final_start
-            print(f"[SUMMARIZATION] ✓ Final summary completed in {final_duration:.2f} seconds")
+            logger.info(f"[SUMMARIZATION] Final summary completed in {final_duration:.2f} seconds")
             return response.choices[0].message.content
         except Exception as e:
-            print(f"[SUMMARIZATION] ✗ Final summarization failed: {str(e)}")
+            logger.error(f"[SUMMARIZATION] Final summarization failed: {str(e)}")
             raise RuntimeError(f"Final summarization failed: {str(e)}")
 
