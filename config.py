@@ -48,6 +48,22 @@ LANGUAGE_NAMES = {
     'other': 'the language used'
 }
 
+# HuggingFace Configuration for TTS
+# Get HF_TOKEN from environment variable first, then fallback to direct setting
+# IMPORTANT: For production, always use environment variable for security
+# To set environment variable:
+#   Windows PowerShell: $env:HF_TOKEN="your_token_here"
+#   Windows CMD: set HF_TOKEN=your_token_here
+#   Linux/Mac: export HF_TOKEN="your_token_here"
+HF_TOKEN = os.environ.get("HF_TOKEN", "") or "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"
+# TTS Model: Try Kokoro first, fallback to other models if needed
+# Note: Some models may require specific providers or may not be available on free tier
+HF_TTS_MODEL = "hexgrad/Kokoro-82M"  # Kokoro TTS model
+HF_TTS_FALLBACK_MODEL = "microsoft/speecht5_tts"  # Fallback model (free, multilingual)
+# HF_TTS_PROVIDER: Set to None to use HuggingFace Inference API directly (free)
+# Provider "fal-ai" requires pre-paid credits, so we use direct API instead
+HF_TTS_PROVIDER = None  # Use HuggingFace Inference API directly (no provider)
+
 # Ensure upload directory exists
 def ensure_upload_directory():
     """Create upload directory if it doesn't exist."""

@@ -14,6 +14,8 @@ from services.audio_service import AudioService
 from services.ai_service import AIService
 from services.validation_service import ValidationService
 from services.file_cleanup_service import FileCleanupService
+from services.chromadb_service import ChromaDBService
+from services.tts_service import TTSService
 from utils.ffmpeg_checker import get_ffmpeg_checker
 
 # Configure logging
@@ -66,6 +68,31 @@ logger.info("Initializing AIService (preloading Whisper models in background)...
 ai_service = AIService()
 logger.info("AIService initialized - Whisper models are preloading in background")
 logger.info("Note: First request may wait for model loading, subsequent requests will be faster")
+
+# Initialize ChromaDB service
+logger.info("Initializing ChromaDB service...")
+chromadb_service = ChromaDBService()
+if chromadb_service.is_available():
+    logger.info("ChromaDB service initialized successfully")
+else:
+    logger.warning("ChromaDB service not available - transcripts will not be stored")
+
+# Initialize TTS service
+logger.info("Initializing TTS service...")
+tts_service = TTSService()
+if tts_service.is_available():
+    logger.info("TTS service initialized successfully")
+else:
+    logger.warning("TTS service not available - text-to-speech will not work")
+    # Check why it's not available
+    try:
+        from config import HF_TOKEN
+        if not HF_TOKEN:
+            logger.warning("  Reason: HF_TOKEN is not set. Please set it as environment variable.")
+        else:
+            logger.warning(f"  Reason: TTS service initialization failed. HF_TOKEN is set: {bool(HF_TOKEN)}")
+    except Exception as e:
+        logger.warning(f"  Reason: Could not check HF_TOKEN: {e}")
 
 
 @app.route('/')
@@ -186,16 +213,36 @@ def process_audio():
             logger.error(f"✗ Summarization failed after {summary_duration:.2f} seconds: {str(e)}")
             raise
         
-        # Step 7: Cleanup old files and temp files
+        # Step 7: Store transcript in ChromaDB
+        transcript_id = ""
         try:
-            # Cleanup old files (non-blocking)
-            deleted_count = cleanup_service.cleanup_old_files()
-            if deleted_count > 0:
-                logger.info(f"Cleaned up {deleted_count} old files")
+            logger.info("[STEP 7/8] Storing transcript in ChromaDB...")
+            transcript_id = chromadb_service.store_transcript(
+                transcript=transcript,
+                summary=summary,
+                topic=topic,
+                language=language,
+                custom_language=custom_language,
+                metadata={
+                    "filename": filename,
+                    "file_size_mb": round(file_size_mb, 2)
+                }
+            )
+            if transcript_id:
+                logger.info(f"✓ Transcript stored in ChromaDB with ID: {transcript_id}")
+            else:
+                logger.warning("ChromaDB storage failed or not available")
+        except Exception as e:
+            logger.warning(f"Failed to store transcript in ChromaDB (non-critical): {e}")
+        
+        # Step 8: Cleanup old files (async, don't block response)
+        try:
+            # Cleanup old files in background (non-blocking)
+            cleanup_service.cleanup_old_files()
         except Exception as e:
             logger.warning(f"Cleanup failed (non-critical): {e}")
         
-        # Step 8: Return results
+        # Step 9: Return results
         total_duration = (datetime.now() - start_time).total_seconds()
         logger.info("=" * 60)
         logger.info(f"✓ Processing completed successfully in {total_duration:.2f} seconds")
@@ -205,7 +252,10 @@ def process_audio():
         
         return jsonify({
             "summary": summary,
-            "download_url": f"/uploads/{filename}"
+            "download_url": f"/uploads/{filename}",
+            "transcript_id": transcript_id,
+            "language": language,
+            "custom_language": custom_language
         })
     
     except ValueError as e:
@@ -264,6 +314,147 @@ def uploaded_file(filename):
     """
     logger.info(f"GET /uploads/{filename} - Serving file")
     return send_from_directory(app.config['UPLOAD_FOLDER'], filename)
+
+
+@app.route('/generate-tts', methods=['POST'])
+def generate_tts():
+    """
+    Generate text-to-speech audio from summary text.
+    
+    Request body (JSON):
+        - text: Text to convert to speech
+        - language: Language code for TTS
+        
+    Returns:
+        JSON response with audio file URL
+    """
+    logger.info("POST /generate-tts - Generating TTS audio")
+    
+    try:
+        if not tts_service.is_available():
+            # Provide detailed error message
+            error_msg = "TTS service is not available. "
+            try:
+                from config import HF_TOKEN
+                if not HF_TOKEN:
+                    error_msg += "Please set HF_TOKEN environment variable. "
+                else:
+                    error_msg += "TTS service initialization failed. "
+            except:
+                pass
+            error_msg += "Please check: 1) Install huggingface_hub: pip install huggingface_hub, 2) Set HF_TOKEN environment variable"
+            return jsonify({"error": error_msg}), 503
+        
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Request body must be JSON"}), 400
+        
+        text = data.get('text', '').strip()
+        language = data.get('language', 'en')
+        custom_language = data.get('custom_language', None)
+        
+        if not text:
+            return jsonify({"error": "Text is required"}), 400
+        
+        logger.info(f"Generating TTS for text (length: {len(text)} chars, language: {language})")
+        
+        # Generate TTS audio
+        import os
+        audio_file = tts_service.text_to_speech(
+            text=text,
+            language=language if language != 'other' else None
+        )
+        
+        if not audio_file or not os.path.exists(audio_file):
+            return jsonify({"error": "Failed to generate TTS audio"}), 500
+        
+        # Move audio file to uploads folder for serving
+        import shutil
+        # Get file extension from generated file (gTTS creates .mp3, HuggingFace creates .wav)
+        file_ext = os.path.splitext(audio_file)[1] or '.mp3'
+        audio_filename = f"tts_{datetime.now().strftime('%Y%m%d_%H%M%S')}{file_ext}"
+        audio_dest = os.path.join(UPLOAD_FOLDER, audio_filename)
+        shutil.move(audio_file, audio_dest)
+        
+        logger.info(f"TTS audio generated: {audio_filename}")
+        
+        return jsonify({
+            "audio_url": f"/uploads/{audio_filename}",
+            "filename": audio_filename
+        })
+        
+    except ValueError as e:
+        logger.error(f"TTS validation error: {e}")
+        return jsonify({"error": str(e)}), 400
+    except RuntimeError as e:
+        logger.error(f"TTS generation error: {e}")
+        return jsonify({"error": str(e)}), 500
+    except Exception as e:
+        logger.error(f"TTS unexpected error: {e}")
+        logger.exception("Full traceback:")
+        traceback.print_exc()
+        return jsonify({
+            "error": f"An unexpected error occurred: {str(e)}"
+        }), 500
+
+
+@app.route('/api/transcripts', methods=['GET'])
+def list_transcripts():
+    """
+    Return stored transcripts summaries for reuse/playback.
+    Query params:
+        query: semantic search text
+        topic: exact topic filter
+        language: language code filter
+        limit: number of entries (default 10, max 50)
+    """
+    if not chromadb_service.is_available():
+        return jsonify({"items": [], "error": "ChromaDB service unavailable"}), 503
+
+    query = request.args.get('query', '').strip() or None
+    topic = request.args.get('topic', '').strip() or None
+    language = request.args.get('language', '').strip() or None
+    try:
+        limit = int(request.args.get('limit', 10))
+    except ValueError:
+        limit = 10
+    limit = max(1, min(limit, 50))
+
+    results = chromadb_service.query_transcripts(
+        query_text=query,
+        topic=topic,
+        language=language,
+        limit=limit
+    )
+
+    for item in results:
+        metadata = item.get("metadata") or {}
+        filename = metadata.get("filename")
+        if filename:
+            item["audio_url"] = f"/uploads/{filename}"
+
+    return jsonify({"items": results})
+
+
+@app.route('/api/transcripts/<doc_id>', methods=['GET'])
+def get_transcript(doc_id: str):
+    """Return a single transcript entry."""
+    if not chromadb_service.is_available():
+        return jsonify({"error": "ChromaDB service unavailable"}), 503
+
+    if not doc_id:
+        return jsonify({"error": "Transcript ID is required"}), 400
+
+    result = chromadb_service.get_transcript(doc_id)
+    if not result:
+        return jsonify({"error": "Transcript not found"}), 404
+
+    metadata = result.get("metadata") or {}
+    filename = metadata.get("filename")
+    if filename:
+        result["audio_url"] = f"/uploads/{filename}"
+
+    return jsonify(result)
 
 
 def signal_handler(sig, frame):

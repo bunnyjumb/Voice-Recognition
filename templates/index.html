@@ -50,6 +50,32 @@
         .warning-banner h4 { margin: 0 0 10px 0; color: #856404; }
         .warning-banner ul { margin: 10px 0; padding-left: 20px; color: #856404; }
         .warning-banner a { color: #0056b3; text-decoration: underline; }
+        .audio-player { margin-top: 20px; padding: 15px; border: 1px solid #dee2e6; border-radius: 8px; background: #f7f9fc; display: none; }
+        .audio-player.active { display: block; }
+        .audio-controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; align-items: center; }
+        .audio-controls label { font-size: 13px; color: #555; }
+        .audio-controls select, .audio-controls input { padding: 6px; border: 1px solid #ccc; border-radius: 4px; min-width: 90px; }
+        .timeline { margin-top: 10px; }
+        .timeline input[type="range"] { width: 100%; }
+        .timeline span { font-size: 12px; color: #666; }
+        .history-section { margin-top: 40px; }
+        .history-controls { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 15px; }
+        .history-controls input, .history-controls select { flex: 1; min-width: 150px; padding: 10px; border-radius: 5px; border: 1px solid #ddd; }
+        .history-controls button { padding: 10px 15px; border: none; border-radius: 5px; background: #17a2b8; color: white; cursor: pointer; }
+        .history-controls button:hover { background: #138496; }
+        .history-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 15px; }
+        .history-card { border: 1px solid #e3e6ea; border-radius: 8px; padding: 15px; background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.04); display: flex; flex-direction: column; gap: 8px; }
+        .history-card h4 { margin: 0; color: #333; }
+        .history-card small { color: #888; }
+        .history-card button { align-self: flex-start; padding: 6px 12px; font-size: 13px; border: none; border-radius: 4px; background: #007bff; color: white; cursor: pointer; }
+        .history-card button:hover { background: #0056b3; }
+        #historyStatus { font-size: 14px; color: #555; margin-bottom: 10px; }
+        #historyDetails { margin-top: 20px; border: 1px solid #dee2e6; border-radius: 8px; padding: 15px; background: #fafafa; display: none; }
+        #historyMetadata { list-style: none; padding-left: 0; color: #555; font-size: 14px; }
+        #historyMetadata li { margin-bottom: 4px; }
+        .history-audio { margin-top: 15px; }
+        #useSummaryButton { margin-top: 15px; width: 100%; padding: 12px; border: none; border-radius: 6px; background: #28a745; color: white; cursor: pointer; font-size: 14px; }
+        #useSummaryButton:hover { background: #218838; }
     </style>
 </head>
 <body>
@@ -128,6 +154,80 @@
             
             <h3>Summary:</h3>
             <div id="summary"></div>
+            
+            <div style="margin-top: 20px;">
+                <button id="ttsButton" class="start" disabled style="width: 100%; padding: 15px; font-size: 16px; margin-top: 10px;">
+                    🔊 Generate Summary Audio
+                </button>
+            </div>
+
+            <div id="ttsPlayer" class="audio-player">
+                <h3 style="margin-top:0;">Summary Playback</h3>
+                <audio id="ttsAudio" controls preload="none" style="width: 100%;"></audio>
+                
+                <div class="audio-controls">
+                    <label for="playbackRateSelect">Playback speed:</label>
+                    <select id="playbackRateSelect">
+                        <option value="0.75">0.75x</option>
+                        <option value="1" selected>1x</option>
+                        <option value="1.25">1.25x</option>
+                        <option value="1.5">1.5x</option>
+                        <option value="2">2x</option>
+                    </select>
+                </div>
+
+                <div class="timeline">
+                    <input type="range" id="ttsTimeline" min="0" value="0" step="0.1" disabled>
+                    <div style="display:flex; justify-content: space-between;">
+                        <span id="ttsCurrentTime">00:00</span>
+                        <span id="ttsDuration">00:00</span>
+                    </div>
+                </div>
+
+                <div class="audio-controls" style="margin-top:10px;">
+                    <label for="segmentStart">Segment start (s):</label>
+                    <input type="number" id="segmentStart" value="0" min="0" step="0.5">
+                    <label for="segmentEnd">Segment end (s):</label>
+                    <input type="number" id="segmentEnd" value="0" min="0" step="0.5">
+                    <button id="playSegmentButton" type="button" style="flex:1; min-width:150px;">▶️ Play Selection</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="history-section" id="historySection">
+            <div class="divider"></div>
+            <h2>Saved Sessions</h2>
+            <div class="history-controls">
+                <input type="text" id="historySearchInput" placeholder="Search topic, summary or transcript...">
+                <select id="historyLanguageFilter">
+                    <option value="">All languages</option>
+                    <option value="vi">Tiếng Việt</option>
+                    <option value="en">English</option>
+                    <option value="zh">中文</option>
+                    <option value="ja">日本語</option>
+                    <option value="ko">한국어</option>
+                    <option value="fr">Français</option>
+                    <option value="de">Deutsch</option>
+                    <option value="es">Español</option>
+                </select>
+                <button id="refreshHistoryBtn" type="button">🔄 Refresh</button>
+            </div>
+            <div id="historyStatus"></div>
+            <div id="historyList" class="history-list"></div>
+
+            <div id="historyDetails">
+                <h4>Selected Session</h4>
+                <ul id="historyMetadata"></ul>
+                <h5>Summary</h5>
+                <div id="historySummary" style="white-space: pre-wrap; background:#fff; padding:10px; border-radius:6px; border:1px solid #e3e6ea;"></div>
+                <h5>Transcript</h5>
+                <div id="historyTranscript" style="white-space: pre-wrap; max-height:200px; overflow:auto; background:#fff; padding:10px; border-radius:6px; border:1px solid #e3e6ea;"></div>
+                <div id="historyAudioWrapper" class="history-audio" style="display:none;">
+                    <h5>Original Audio</h5>
+                    <audio id="historyAudio" controls preload="none" style="width:100%;"></audio>
+                </div>
+                <button id="useSummaryButton" type="button">Use This Summary for TTS</button>
+            </div>
         </div>
     </div>
  
@@ -147,121 +247,164 @@
         const progressContainer = document.getElementById('progressContainer');
         const progressFill = document.getElementById('progressFill');
         const progressText = document.getElementById('progressText');
+        const ttsButton = document.getElementById('ttsButton');
+        const ttsPlayer = document.getElementById('ttsPlayer');
+        const ttsAudio = document.getElementById('ttsAudio');
+        const playbackRateSelect = document.getElementById('playbackRateSelect');
+        const ttsTimeline = document.getElementById('ttsTimeline');
+        const ttsCurrentTime = document.getElementById('ttsCurrentTime');
+        const ttsDuration = document.getElementById('ttsDuration');
+        const segmentStartInput = document.getElementById('segmentStart');
+        const segmentEndInput = document.getElementById('segmentEnd');
+        const playSegmentButton = document.getElementById('playSegmentButton');
+        const historySearchInput = document.getElementById('historySearchInput');
+        const historyLanguageFilter = document.getElementById('historyLanguageFilter');
+        const refreshHistoryBtn = document.getElementById('refreshHistoryBtn');
+        const historyList = document.getElementById('historyList');
+        const historyStatus = document.getElementById('historyStatus');
+        const historyDetails = document.getElementById('historyDetails');
+        const historySummary = document.getElementById('historySummary');
+        const historyTranscript = document.getElementById('historyTranscript');
+        const historyMetadata = document.getElementById('historyMetadata');
+        const historyAudioWrapper = document.getElementById('historyAudioWrapper');
+        const historyAudio = document.getElementById('historyAudio');
+        const useSummaryButton = document.getElementById('useSummaryButton');
+        const ffmpegWarning = document.getElementById('ffmpegWarning');
 
+        const mediaRecorderSupported = navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
         let isRecording = false;
         let mediaRecorder;
         let audioChunks = [];
         let currentStream = null;
-        
-        // Progress simulation function
+        let currentSummary = '';
+        let currentLanguage = '';
+        let currentCustomLanguage = '';
+        let ffmpegAvailable = null;
+        let segmentPlaybackActive = false;
+        let segmentEndBoundary = 0;
+        let historySearchTimeout = null;
+        let selectedHistoryId = null;
+        const historyCache = new Map();
+
+        function formatTime(seconds) {
+            if (!Number.isFinite(seconds) || seconds < 0) {
+                return '00:00';
+            }
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
         function updateProgress(percent, text) {
             progressFill.style.width = percent + '%';
             progressFill.textContent = Math.round(percent) + '%';
             progressText.textContent = text;
         }
-        
+
         function showProgress() {
             progressContainer.style.display = 'block';
             updateProgress(0, 'Initializing...');
         }
-        
+
         function hideProgress() {
             progressContainer.style.display = 'none';
         }
 
-        
-        // Remove error styling from fields
         function clearFieldErrors() {
             topicInput.classList.remove('error-field');
             languageSelect.classList.remove('error-field');
             customLanguageInput.classList.remove('error-field');
         }
-        
-        // Add error styling to field
+
         function markFieldError(field, message) {
             field.classList.add('error-field');
-            statusElement.textContent = message;
-            statusElement.classList.add('error');
+            if (message) {
+                statusElement.textContent = message;
+                statusElement.classList.add('error');
+            }
             field.focus();
-            // Scroll to field if needed
             field.scrollIntoView({ behavior: 'smooth', block: 'center' });
         }
-        
-        // Validation function with visual feedback
+
         function validateForm() {
             clearFieldErrors();
-            
+
             const topic = topicInput.value.trim();
             const language = languageSelect.value;
             const customLanguage = customLanguageInput.value.trim();
-            
+
             if (!topic) {
                 markFieldError(topicInput, '❌ Error: Meeting Topic is required!');
                 return false;
             }
-            
+
             if (!language) {
                 markFieldError(languageSelect, '❌ Error: Conversation Language is required!');
                 return false;
             }
-            
+
             if (language === 'other' && !customLanguage) {
                 markFieldError(customLanguageInput, '❌ Error: Please specify the custom language!');
                 return false;
             }
-            
-            // All valid
+
             statusElement.classList.remove('error');
             return true;
         }
-        
-        // Remove error styling when user starts typing/selecting
-        topicInput.addEventListener('input', () => {
-            if (topicInput.classList.contains('error-field')) {
-                topicInput.classList.remove('error-field');
-            }
-        });
-        
-        languageSelect.addEventListener('change', () => {
-            if (languageSelect.classList.contains('error-field')) {
-                languageSelect.classList.remove('error-field');
-            }
-        });
-        
-        customLanguageInput.addEventListener('input', () => {
-            if (customLanguageInput.classList.contains('error-field')) {
-                customLanguageInput.classList.remove('error-field');
-            }
-        });
 
-        // Check MediaRecorder support
-        const mediaRecorderSupported = navigator.mediaDevices && navigator.mediaDevices.getUserMedia;
+        topicInput.addEventListener('input', () => topicInput.classList.remove('error-field'));
+        languageSelect.addEventListener('change', () => languageSelect.classList.remove('error-field'));
+        customLanguageInput.addEventListener('input', () => customLanguageInput.classList.remove('error-field'));
+
         if (!mediaRecorderSupported) {
             statusElement.textContent = 'Your browser does not support recording. Please use a modern browser.';
             statusElement.classList.add('error');
             recordButton.disabled = true;
         }
-        
-        // Check FFmpeg availability on server
-        let ffmpegAvailable = null;
-        const ffmpegWarning = document.getElementById('ffmpegWarning');
-        
+
+        function resetTTSPlayer() {
+            segmentPlaybackActive = false;
+            segmentEndBoundary = 0;
+            ttsAudio.pause();
+            ttsAudio.removeAttribute('src');
+            ttsAudio.load();
+            ttsTimeline.value = 0;
+            ttsTimeline.disabled = true;
+            ttsCurrentTime.textContent = '00:00';
+            ttsDuration.textContent = '00:00';
+            segmentStartInput.value = 0;
+            segmentEndInput.value = 0;
+            ttsPlayer.classList.remove('active');
+        }
+
+        function updateTTSAvailability() {
+            ttsButton.disabled = !currentSummary;
+        }
+
+        function clampSegmentInputs() {
+            if (!ttsAudio.duration) {
+                segmentStartInput.value = 0;
+                segmentEndInput.value = 0;
+                return;
+            }
+            const duration = ttsAudio.duration;
+            let start = parseFloat(segmentStartInput.value);
+            let end = parseFloat(segmentEndInput.value);
+            start = Number.isFinite(start) ? Math.max(0, Math.min(start, duration)) : 0;
+            end = Number.isFinite(end) ? Math.max(start, Math.min(end, duration)) : duration;
+            segmentStartInput.value = start.toFixed(1);
+            segmentEndInput.value = end.toFixed(1);
+        }
+
         function checkFFmpeg() {
             return fetch('/check-ffmpeg')
                 .then(response => response.json())
                 .then(data => {
                     ffmpegAvailable = data.ffmpeg_available;
-                    if (!ffmpegAvailable) {
-                        console.warn('FFmpeg not available on server');
-                        // Show warning banner
-                        if (ffmpegWarning) {
-                            ffmpegWarning.classList.add('show');
-                        }
-                    } else {
-                        // Hide warning banner
-                        if (ffmpegWarning) {
-                            ffmpegWarning.classList.remove('show');
-                        }
+                    if (!ffmpegAvailable && ffmpegWarning) {
+                        ffmpegWarning.classList.add('show');
+                    } else if (ffmpegWarning) {
+                        ffmpegWarning.classList.remove('show');
                     }
                     updateRecordButtonState();
                     return ffmpegAvailable;
@@ -269,7 +412,6 @@
                 .catch(error => {
                     console.error('Error checking FFmpeg:', error);
                     ffmpegAvailable = false;
-                    // Show warning on error (assume not available)
                     if (ffmpegWarning) {
                         ffmpegWarning.classList.add('show');
                     }
@@ -277,73 +419,61 @@
                     return false;
                 });
         }
-        
-        // Function to check if recording can be started
+
         function canStartRecording() {
-            // Check MediaRecorder support first
             if (!mediaRecorderSupported) {
                 return { allowed: false, reason: 'Your browser does not support recording. Please use a modern browser.' };
             }
-            
+
             const topic = topicInput.value.trim();
             const language = languageSelect.value;
             const customLanguage = customLanguageInput.value.trim();
-            
-            // Check form fields
+
             if (!topic) {
                 return { allowed: false, reason: 'Meeting Topic is required before starting recording!' };
             }
-            
+
             if (!language) {
                 return { allowed: false, reason: 'Conversation Language is required before starting recording!' };
             }
-            
+
             if (language === 'other' && !customLanguage) {
                 return { allowed: false, reason: 'Please specify the custom language before starting recording!' };
             }
-            
-            // Check FFmpeg (required for Whisper transcription)
+
             if (ffmpegAvailable === false) {
-                return { 
-                    allowed: false, 
-                    reason: 'FFmpeg is required for audio processing. Please install FFmpeg before starting recording. See instructions above.' 
+                return {
+                    allowed: false,
+                    reason: 'FFmpeg is required for audio processing. Please install FFmpeg before recording.'
                 };
             }
-            
-            // If FFmpeg check is still pending, wait for it
+
             if (ffmpegAvailable === null) {
                 return { allowed: false, reason: 'Checking system requirements...' };
             }
-            
+
             return { allowed: true };
         }
-        
-        // Update record button state based on requirements
+
         function updateRecordButtonState() {
-            // Don't update if MediaRecorder is not supported (button should stay disabled)
             if (!mediaRecorderSupported) {
                 return;
             }
-            
             const canStart = canStartRecording();
             if (!canStart.allowed && !isRecording) {
                 recordButton.disabled = true;
-                if (canStart.reason) {
-                    recordButton.title = canStart.reason;
-                }
+                recordButton.title = canStart.reason || '';
             } else if (!isRecording) {
                 recordButton.disabled = false;
                 recordButton.title = '';
             }
         }
-        
-        checkFFmpeg(); // Check on page load
-        
-        // Update button state when form fields change
+
+        checkFFmpeg();
+
         topicInput.addEventListener('input', updateRecordButtonState);
         languageSelect.addEventListener('change', () => {
             updateRecordButtonState();
-            // Also handle custom language visibility
             if (languageSelect.value === 'other') {
                 customLanguageGroup.style.display = 'block';
                 customLanguageInput.required = true;
@@ -355,13 +485,30 @@
         });
         customLanguageInput.addEventListener('input', updateRecordButtonState);
 
-        // Handle file upload
         fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];
-            if (file) {
-                // Check file type
-                if (!file.type.startsWith('audio/')) {
-                    statusElement.textContent = '❌ Error: Please select an audio file! Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm';
+            if (!file) {
+                return;
+            }
+            if (!file.type.startsWith('audio/')) {
+                statusElement.textContent = '❌ Error: Please select an audio file! Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm';
+                statusElement.classList.add('error');
+                fileInput.value = '';
+                fileName.style.display = 'none';
+                const processButton = document.getElementById('processFileButton');
+                if (processButton) {
+                    processButton.remove();
+                }
+                return;
+            }
+
+            const maxSize = 25 * 1024 * 1024;
+            const maxRecommendedSize = 100 * 1024 * 1024;
+            const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
+
+            if (file.size > maxRecommendedSize) {
+                if (ffmpegAvailable === false) {
+                    statusElement.textContent = `❌ Error: File is too large (${fileSizeMB}MB) and FFmpeg is not installed. Please compress the file or install FFmpeg.`;
                     statusElement.classList.add('error');
                     fileInput.value = '';
                     fileName.style.display = 'none';
@@ -371,68 +518,45 @@
                     }
                     return;
                 }
-                
-                // Check file size (warn if very large, but allow upload)
-                const maxSize = 25 * 1024 * 1024; // 25MB (Whisper limit per chunk)
-                const maxRecommendedSize = 100 * 1024 * 1024; // 100MB (server limit)
-                const fileSizeMB = (file.size / (1024 * 1024)).toFixed(2);
-                
-                if (file.size > maxRecommendedSize) {
-                    if (ffmpegAvailable === false) {
-                        statusElement.textContent = `❌ Error: File is too large (${fileSizeMB}MB) and FFmpeg is not installed on server. Please compress file to < 25MB before uploading or install FFmpeg on server.`;
-                        statusElement.classList.add('error');
-                        fileInput.value = '';
-                        fileName.style.display = 'none';
-                        const processButton = document.getElementById('processFileButton');
-                        if (processButton) {
-                            processButton.remove();
-                        }
-                        return;
-                    }
-                    statusElement.textContent = `⚠️ Warning: File is very large (${fileSizeMB}MB). Maximum recommended size is 100MB. Processing may take longer.`;
+                statusElement.textContent = `⚠️ Warning: File is very large (${fileSizeMB}MB). Processing may take longer.`;
+                statusElement.classList.add('error');
+            } else if (file.size > maxSize) {
+                if (ffmpegAvailable === false) {
+                    statusElement.textContent = `❌ Error: File is too large (${fileSizeMB}MB) and FFmpeg is not installed. Files must be under 25MB.`;
                     statusElement.classList.add('error');
-                } else if (file.size > maxSize) {
-                    if (ffmpegAvailable === false) {
-                        statusElement.textContent = `❌ Error: File is too large (${fileSizeMB}MB) and FFmpeg is not installed. File must be < 25MB. Please compress file manually or install FFmpeg on server.`;
-                        statusElement.classList.add('error');
-                        fileInput.value = '';
-                        fileName.style.display = 'none';
-                        const processButton = document.getElementById('processFileButton');
-                        if (processButton) {
-                            processButton.remove();
-                        }
-                        return;
+                    fileInput.value = '';
+                    fileName.style.display = 'none';
+                    const processButton = document.getElementById('processFileButton');
+                    if (processButton) {
+                        processButton.remove();
                     }
-                    statusElement.textContent = `ℹ️ Info: File is large (${fileSizeMB}MB). The system will automatically compress and split it for processing.`;
-                    statusElement.classList.remove('error');
-                    statusElement.classList.add('success');
+                    return;
                 }
-                
-                // File is valid
-                fileName.textContent = `Selected: ${file.name} (${fileSizeMB}MB)`;
-                fileName.style.display = 'block';
-                statusElement.textContent = '✅ File ready. Click "Process Audio File" button to start summarization.';
+                statusElement.textContent = `ℹ️ Info: File is large (${fileSizeMB}MB). The system will compress it automatically.`;
                 statusElement.classList.remove('error');
                 statusElement.classList.add('success');
-                
-                // Create process button if it doesn't exist
-                let processButton = document.getElementById('processFileButton');
-                if (!processButton) {
-                    processButton = document.createElement('button');
-                    processButton.id = 'processFileButton';
-                    processButton.textContent = '📤 Process Audio File';
-                    processButton.className = 'start';
-                    processButton.style.width = '100%';
-                    processButton.style.marginTop = '10px';
-                    processButton.addEventListener('click', () => {
-                        processFile(file);
-                    });
-                    uploadSection.appendChild(processButton);
-                }
+            } else {
+                statusElement.classList.remove('error');
+                statusElement.classList.add('success');
+            }
+
+            fileName.textContent = `Selected: ${file.name} (${fileSizeMB}MB)`;
+            fileName.style.display = 'block';
+            statusElement.textContent = '✅ File ready. Click "Process Audio File" to start summarization.';
+
+            let processButton = document.getElementById('processFileButton');
+            if (!processButton) {
+                processButton = document.createElement('button');
+                processButton.id = 'processFileButton';
+                processButton.textContent = '📤 Process Audio File';
+                processButton.className = 'start';
+                processButton.style.width = '100%';
+                processButton.style.marginTop = '10px';
+                processButton.addEventListener('click', () => processFile(file));
+                uploadSection.appendChild(processButton);
             }
         });
 
-        // Drag and drop
         uploadSection.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadSection.classList.add('dragover');
@@ -452,61 +576,47 @@
             }
         });
 
-        // Handle recording
         recordButton.addEventListener('click', async () => {
             if (isRecording) {
-                // Stop recording
                 stopRecording();
-            } else {
-                // Start recording - validate first
-                const canStart = canStartRecording();
-                if (!canStart.allowed) {
-                    // Show error message
-                    statusElement.textContent = `❌ ${canStart.reason}`;
-                    statusElement.classList.add('error');
-                    
-                    // Highlight missing fields
-                    clearFieldErrors();
-                    const topic = topicInput.value.trim();
-                    const language = languageSelect.value;
-                    const customLanguage = customLanguageInput.value.trim();
-                    
-                    if (!topic) {
-                        markFieldError(topicInput, '');
-                    }
-                    if (!language) {
-                        markFieldError(languageSelect, '');
-                    }
-                    if (language === 'other' && !customLanguage) {
-                        markFieldError(customLanguageInput, '');
-                    }
-                    
-                    return;
-                }
-                
-                // All validations passed, start recording
-                await startRecording();
+                return;
             }
+            const canStart = canStartRecording();
+            if (!canStart.allowed) {
+                statusElement.textContent = `❌ ${canStart.reason}`;
+                statusElement.classList.add('error');
+                clearFieldErrors();
+                if (!topicInput.value.trim()) {
+                    markFieldError(topicInput, '');
+                }
+                if (!languageSelect.value) {
+                    markFieldError(languageSelect, '');
+                }
+                if (languageSelect.value === 'other' && !customLanguageInput.value.trim()) {
+                    markFieldError(customLanguageInput, '');
+                }
+                return;
+            }
+            await startRecording();
         });
 
         async function startRecording() {
             try {
-                // Clear any previous errors
                 clearFieldErrors();
                 statusElement.textContent = 'Requesting microphone access...';
                 statusElement.classList.remove('error', 'success');
-                
-                currentStream = await navigator.mediaDevices.getUserMedia({ 
+
+                currentStream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         echoCancellation: true,
                         noiseSuppression: true,
                         autoGainControl: true
-                    } 
+                    }
                 });
-                
+
                 mediaRecorder = new MediaRecorder(currentStream);
-                
-                mediaRecorder.ondataavailable = event => {
+
+                mediaRecorder.ondataavailable = (event) => {
                     if (event.data.size > 0) {
                         audioChunks.push(event.data);
                     }
@@ -518,7 +628,6 @@
                         audioChunks = [];
                         sendData(audioBlob, 'recording.webm');
                     }
-                    // Stop all tracks
                     if (currentStream) {
                         currentStream.getTracks().forEach(track => track.stop());
                         currentStream = null;
@@ -537,14 +646,14 @@
                 recordButton.textContent = '⏹️ Stop Recording';
                 recordButton.classList.remove('start');
                 recordButton.classList.add('stop');
-                recordButton.disabled = false; // Ensure button is enabled when recording
+                recordButton.disabled = false;
                 statusElement.textContent = '🎤 Recording... Click button to stop.';
                 statusElement.classList.remove('error');
                 statusElement.classList.add('success');
                 resultsElement.style.display = 'none';
                 isRecording = true;
             } catch (error) {
-                console.error("Error accessing microphone: ", error);
+                console.error('Error accessing microphone:', error);
                 let errorMsg = 'Cannot access microphone. ';
                 if (error.name === 'NotAllowedError' || error.name === 'PermissionDeniedError') {
                     errorMsg += 'Please grant microphone access in browser settings.';
@@ -563,20 +672,16 @@
         }
 
         function stopRecording() {
-            // Form validation is already done before starting recording,
-            // but double-check here as well
             if (!validateForm()) {
-                // If validation fails, don't stop recording
                 return;
             }
-            
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 mediaRecorder.stop();
             }
             recordButton.textContent = '🎤 Start Recording';
             recordButton.classList.remove('stop');
             recordButton.classList.add('start');
-            recordButton.disabled = false; // Re-enable button
+            recordButton.disabled = false;
             statusElement.textContent = 'Processing... Please wait.';
             statusElement.classList.remove('error', 'success');
             isRecording = false;
@@ -584,11 +689,9 @@
         }
 
         function processFile(file) {
-            // Validate form first
             if (!validateForm()) {
                 return;
             }
-            
             statusElement.textContent = 'Processing file... Please wait.';
             statusElement.classList.remove('error', 'success');
             resultsElement.style.display = 'none';
@@ -597,24 +700,16 @@
         }
 
         function sendData(audioBlob, filename) {
-            // Validate form
             if (!validateForm()) {
                 hideProgress();
                 return;
             }
-            
+
             const formData = new FormData();
             formData.append('audio_data', audioBlob, filename);
-            
-            // Add topic and language (required)
-            const topic = topicInput.value.trim();
-            const language = languageSelect.value;
-            
-            formData.append('topic', topic);
-            formData.append('language', language);
-            
-            // Add custom language if "other" is selected
-            if (language === 'other') {
+            formData.append('topic', topicInput.value.trim());
+            formData.append('language', languageSelect.value);
+            if (languageSelect.value === 'other') {
                 const customLanguage = customLanguageInput.value.trim();
                 if (customLanguage) {
                     formData.append('custom_language', customLanguage);
@@ -626,25 +721,18 @@
             showProgress();
             updateProgress(5, 'Uploading file...');
 
-            // Simulate progress updates
             const progressInterval = setInterval(() => {
                 const current = parseInt(progressFill.style.width) || 5;
                 if (current < 90) {
-                    // Gradually increase progress
                     let increment = 2;
-                    if (current > 40) increment = 1; // Slower after transcription starts
-                    if (current > 70) increment = 0.5; // Even slower during summarization
-                    let status = 'Initializing...';
-                    if (current < 10) {
-                        status = 'Compressing audio file...';
-                    } else if (current < 25) {
-                        status = 'Transcribing audio...';
-                    } else if (current < 60) {
-                        status = 'Processing transcript...';
-                    } else {
-                        status = 'Summarizing content...';
-                    }
-                    updateProgress(Math.min(current + increment, 90), status);
+                    if (current > 40) increment = 1;
+                    if (current > 70) increment = 0.5;
+                    let label = 'Initializing...';
+                    if (current < 10) label = 'Compressing audio file...';
+                    else if (current < 25) label = 'Transcribing audio...';
+                    else if (current < 60) label = 'Processing transcript...';
+                    else label = 'Summarizing content...';
+                    updateProgress(Math.min(current + increment, 90), label);
                 }
             }, 500);
 
@@ -652,24 +740,20 @@
                 method: 'POST',
                 body: formData
             })
-            .then(response => {
-                clearInterval(progressInterval);
-                if (!response.ok) {
-                    return response.json().then(data => {
-                        throw new Error(data.error || `Server error: ${response.statusText}`);
-                    });
-                }
-                updateProgress(95, 'Finalizing...');
-                return response.json();
-            })
-            .then(data => {
-                clearInterval(progressInterval);
-                if (data.error) {
-                    updateProgress(0, 'Error occurred');
-                    hideProgress();
-                    statusElement.textContent = `Error: ${data.error}`;
-                    statusElement.classList.add('error');
-                } else {
+                .then(response => {
+                    clearInterval(progressInterval);
+                    if (!response.ok) {
+                        return response.json().then(data => {
+                            throw new Error(data.error || `Server error: ${response.statusText}`);
+                        });
+                    }
+                    updateProgress(95, 'Finalizing...');
+                    return response.json();
+                })
+                .then(data => {
+                    if (data.error) {
+                        throw new Error(data.error);
+                    }
                     updateProgress(100, 'Complete!');
                     setTimeout(() => {
                         hideProgress();
@@ -678,26 +762,287 @@
                         downloadLink.download = filename || 'recording.webm';
                         resultsElement.style.display = 'block';
                         statusElement.textContent = '✅ Processing complete!';
+                        statusElement.classList.remove('error');
                         statusElement.classList.add('success');
-                        
-                        // Reset file input
+
+                        currentSummary = data.summary;
+                        currentLanguage = data.language || languageSelect.value;
+                        currentCustomLanguage = data.custom_language || '';
+                        resetTTSPlayer();
+                        updateTTSAvailability();
+                        ttsButton.textContent = '🔊 Generate Summary Audio';
+
                         fileInput.value = '';
                         fileName.style.display = 'none';
                         const processButton = document.getElementById('processFileButton');
                         if (processButton) {
                             processButton.remove();
                         }
+
+                        loadHistory(false);
                     }, 500);
-                }
-            })
-            .catch(error => {
-                clearInterval(progressInterval);
-                hideProgress();
-                console.error('Error sending data:', error);
-                statusElement.textContent = `An error occurred during processing. Details: ${error.message}`;
+                })
+                .catch(error => {
+                    clearInterval(progressInterval);
+                    hideProgress();
+                    console.error('Error sending data:', error);
+                    statusElement.textContent = `An error occurred during processing. Details: ${error.message}`;
+                    statusElement.classList.add('error');
+                });
+        }
+
+        playbackRateSelect.addEventListener('change', () => {
+            const rate = parseFloat(playbackRateSelect.value);
+            ttsAudio.playbackRate = Number.isFinite(rate) ? rate : 1;
+        });
+
+        ttsAudio.addEventListener('loadedmetadata', () => {
+            if (!ttsAudio.duration) {
+                return;
+            }
+            const duration = ttsAudio.duration;
+            ttsTimeline.max = duration;
+            ttsTimeline.disabled = false;
+            ttsDuration.textContent = formatTime(duration);
+            segmentStartInput.value = '0.0';
+            segmentEndInput.value = duration.toFixed(1);
+        });
+
+        ttsAudio.addEventListener('timeupdate', () => {
+            if (!ttsTimeline.disabled) {
+                ttsTimeline.value = ttsAudio.currentTime;
+            }
+            ttsCurrentTime.textContent = formatTime(ttsAudio.currentTime);
+            if (segmentPlaybackActive && ttsAudio.currentTime >= segmentEndBoundary) {
+                ttsAudio.pause();
+                segmentPlaybackActive = false;
+            }
+        });
+
+        ttsAudio.addEventListener('ended', () => {
+            segmentPlaybackActive = false;
+        });
+
+        ttsTimeline.addEventListener('input', () => {
+            if (ttsTimeline.disabled) {
+                return;
+            }
+            ttsAudio.currentTime = parseFloat(ttsTimeline.value) || 0;
+        });
+
+        segmentStartInput.addEventListener('change', clampSegmentInputs);
+        segmentEndInput.addEventListener('change', clampSegmentInputs);
+
+        playSegmentButton.addEventListener('click', () => {
+            if (!ttsAudio.src || !ttsAudio.duration) {
+                statusElement.textContent = '⚠️ Generate TTS audio first.';
                 statusElement.classList.add('error');
+                return;
+            }
+            clampSegmentInputs();
+            const start = parseFloat(segmentStartInput.value) || 0;
+            const end = parseFloat(segmentEndInput.value) || ttsAudio.duration;
+            segmentPlaybackActive = true;
+            segmentEndBoundary = end;
+            ttsAudio.currentTime = start;
+            ttsAudio.play().catch(() => {});
+        });
+
+        ttsButton.addEventListener('click', generateSummaryAudio);
+
+        async function generateSummaryAudio() {
+            if (!currentSummary) {
+                statusElement.textContent = '❌ Error: No summary available for TTS.';
+                statusElement.classList.add('error');
+                return;
+            }
+
+            try {
+                ttsButton.disabled = true;
+                ttsButton.textContent = '⏳ Generating audio...';
+                statusElement.textContent = 'Generating text-to-speech audio...';
+                statusElement.classList.remove('error', 'success');
+                resetTTSPlayer();
+
+                const response = await fetch('/generate-tts', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        text: currentSummary,
+                        language: currentLanguage,
+                        custom_language: currentCustomLanguage
+                    })
+                });
+
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'TTS generation failed');
+                }
+
+                ttsAudio.src = data.audio_url;
+                ttsAudio.playbackRate = parseFloat(playbackRateSelect.value) || 1;
+                ttsPlayer.classList.add('active');
+                ttsAudio.load();
+                statusElement.textContent = 'Summary audio ready. Use the playback controls below.';
+                statusElement.classList.remove('error');
+                statusElement.classList.add('success');
+
+                try {
+                    await ttsAudio.play();
+                } catch (_) {
+                    // Autoplay might be blocked
+                }
+            } catch (error) {
+                console.error('TTS error:', error);
+                statusElement.textContent = `❌ TTS Error: ${error.message}`;
+                statusElement.classList.add('error');
+                resetTTSPlayer();
+            } finally {
+                ttsButton.textContent = '🔊 Generate Summary Audio';
+                updateTTSAvailability();
+            }
+        }
+
+        refreshHistoryBtn.addEventListener('click', () => loadHistory());
+        historyLanguageFilter.addEventListener('change', () => loadHistory(false));
+        historySearchInput.addEventListener('input', () => {
+            clearTimeout(historySearchTimeout);
+            historySearchTimeout = setTimeout(() => loadHistory(false), 500);
+        });
+
+        useSummaryButton.addEventListener('click', () => {
+            if (!selectedHistoryId) {
+                statusElement.textContent = 'Please select a saved session first.';
+                statusElement.classList.add('error');
+                return;
+            }
+            const item = historyCache.get(selectedHistoryId);
+            if (!item || !item.summary) {
+                statusElement.textContent = 'Selected session has no summary to reuse.';
+                statusElement.classList.add('error');
+                return;
+            }
+
+            summaryElement.textContent = item.summary;
+            resultsElement.style.display = 'block';
+            currentSummary = item.summary;
+            currentLanguage = (item.metadata && item.metadata.language) || languageSelect.value || 'en';
+            currentCustomLanguage = (item.metadata && item.metadata.custom_language) || '';
+            statusElement.textContent = 'Summary loaded from history. You can generate fresh TTS audio now.';
+            statusElement.classList.remove('error');
+            statusElement.classList.add('success');
+            resetTTSPlayer();
+            updateTTSAvailability();
+            window.scrollTo({ top: resultsElement.offsetTop - 20, behavior: 'smooth' });
+        });
+
+        function renderHistoryList(items) {
+            historyList.innerHTML = '';
+            if (!items.length) {
+                selectedHistoryId = null;
+                historyDetails.style.display = 'none';
+                return;
+            }
+
+            items.forEach(item => {
+                historyCache.set(item.id, item);
+                const card = document.createElement('div');
+                card.className = 'history-card';
+
+                const title = document.createElement('h4');
+                title.textContent = (item.metadata && item.metadata.topic) || 'Untitled Session';
+                card.appendChild(title);
+
+                const timestamp = document.createElement('small');
+                const rawTimestamp = item.metadata && item.metadata.timestamp;
+                timestamp.textContent = rawTimestamp ? new Date(rawTimestamp).toLocaleString() : 'Unknown time';
+                card.appendChild(timestamp);
+
+                const summaryPreview = document.createElement('p');
+                summaryPreview.style.margin = '0';
+                summaryPreview.style.color = '#555';
+                const preview = (item.summary || '').trim();
+                summaryPreview.textContent = preview ? `${preview.slice(0, 140)}${preview.length > 140 ? '…' : ''}` : 'No summary stored.';
+                card.appendChild(summaryPreview);
+
+                const button = document.createElement('button');
+                button.type = 'button';
+                button.textContent = 'View details';
+                button.addEventListener('click', () => showHistoryDetails(item.id));
+                card.appendChild(button);
+
+                historyList.appendChild(card);
             });
         }
+
+        function showHistoryDetails(id) {
+            const item = historyCache.get(id);
+            if (!item) {
+                return;
+            }
+            selectedHistoryId = id;
+            const metadata = item.metadata || {};
+            const details = [
+                `<strong>Topic:</strong> ${metadata.topic || 'N/A'}`,
+                `<strong>Language:</strong> ${metadata.language || 'unknown'}`,
+                metadata.custom_language ? `<strong>Custom language:</strong> ${metadata.custom_language}` : '',
+                metadata.file_size_mb ? `<strong>File size:</strong> ${metadata.file_size_mb} MB` : '',
+                metadata.timestamp ? `<strong>Saved:</strong> ${new Date(metadata.timestamp).toLocaleString()}` : ''
+            ].filter(Boolean);
+            historyMetadata.innerHTML = details.map(entry => `<li>${entry}</li>`).join('');
+            historySummary.textContent = item.summary || 'No summary stored.';
+            historyTranscript.textContent = item.transcript || 'No transcript stored.';
+
+            if (item.audio_url) {
+                historyAudioWrapper.style.display = 'block';
+                historyAudio.src = item.audio_url;
+            } else {
+                historyAudioWrapper.style.display = 'none';
+                historyAudio.removeAttribute('src');
+                historyAudio.load();
+            }
+
+            historyDetails.style.display = 'block';
+        }
+
+        async function loadHistory(showSpinner = true) {
+            if (showSpinner) {
+                historyStatus.textContent = 'Loading saved sessions...';
+            }
+            const params = new URLSearchParams({ limit: '9' });
+            const query = historySearchInput.value.trim();
+            if (query) {
+                params.append('query', query);
+            }
+            const languageFilter = historyLanguageFilter.value;
+            if (languageFilter) {
+                params.append('language', languageFilter);
+            }
+
+            try {
+                const response = await fetch(`/api/transcripts?${params.toString()}`);
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'Failed to load saved sessions');
+                }
+                historyCache.clear();
+                renderHistoryList(data.items || []);
+                historyStatus.textContent = (data.items && data.items.length)
+                    ? `Showing ${data.items.length} saved session(s).`
+                    : 'No saved sessions yet.';
+            } catch (error) {
+                console.error('History load error:', error);
+                historyStatus.textContent = `Cannot load saved sessions: ${error.message}`;
+                historyList.innerHTML = '';
+                historyDetails.style.display = 'none';
+            }
+        }
+
+        resetTTSPlayer();
+        updateTTSAvailability();
+        loadHistory();
     </script>
 </body>
 </html>
