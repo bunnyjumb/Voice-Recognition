@@ -34,8 +34,9 @@
         .error { color: #dc3545; font-weight: 600; }
         .success { color: #28a745; }
         #progressContainer { margin-top: 20px; display: none; }
-        #progressBar { width: 100%; height: 25px; background-color: #e9ecef; border-radius: 5px; overflow: hidden; margin-top: 10px; }
-        #progressFill { height: 100%; background-color: #007bff; width: 0%; transition: width 0.3s ease; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 600; }
+        #progressBar { width: 100%; height: 25px; background-color: #e9ecef; border-radius: 5px; overflow: hidden; margin-top: 10px; position: relative;}
+        #progressFill { height: 100%; background-color: #007bff; width: 0%; transition: width 0.3s ease; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: 600; position: relative;}
+        #progressTextPercent {position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-weight: 600;color: rgb(0, 0, 0); pointer-events: none; z-index: 10}
         #progressText { text-align: center; margin-top: 5px; color: #666; font-size: 14px; }
         #results { margin-top: 30px; border-top: 1px solid #eee; padding-top: 20px; display: none; }
         h2 { color: #0056b3; }
@@ -76,6 +77,30 @@
         .history-audio { margin-top: 15px; }
         #useSummaryButton { margin-top: 15px; width: 100%; padding: 12px; border: none; border-radius: 6px; background: #28a745; color: white; cursor: pointer; font-size: 14px; }
         #useSummaryButton:hover { background: #218838; }
+        .history-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .history-header h4 {
+            margin: 0;
+        }
+
+        .close-btn {
+            background: #dc3545;
+            color: white;
+            border: none;
+            font-size: 16px;
+            padding: 4px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+
+        .close-btn:hover {
+            background: #b52d3a;
+        }
     </style>
 </head>
 <body>
@@ -143,7 +168,8 @@
         
         <div id="progressContainer">
             <div id="progressBar">
-                <div id="progressFill">0%</div>
+                <div id="progressFill"></div>
+                <div id="progressTextPercent">0%</div>
             </div>
             <div id="progressText">Initializing...</div>
         </div>
@@ -154,7 +180,6 @@
             
             <h3>Summary:</h3>
             <div id="summary"></div>
-            
             <div style="margin-top: 20px;">
                 <button id="ttsButton" class="start" disabled style="width: 100%; padding: 15px; font-size: 16px; margin-top: 10px;">
                     🔊 Generate Summary Audio
@@ -194,6 +219,25 @@
             </div>
         </div>
 
+        <!-- ========== CHATBOT ON SUMMARY ========== -->
+        <div class="card" id="chatbotCard" style="margin-top: 25px; display:none; padding:20px; border-radius:10px; background:white; border:1px solid #ddd;">
+            <h3>💬 Ask AI about this summary</h3>
+
+            <div id="chatWindow" 
+                style="border:1px solid #ddd; border-radius:6px; padding:10px; height:200px; overflow-y:auto; background:#f9f9f9; margin-bottom:10px;">
+            </div>
+
+            <div class="input-group">
+                <input id="chatInput" type="text" class="form-control" placeholder="Ask something about this summary..." 
+                    style="flex:1; padding:10px; border-radius:6px; border:1px solid #ccc;">
+                <button id="chatSendBtn" 
+                    style="padding:10px 20px; border:none; border-radius:6px; background:#007bff; color:white; margin-left:10px; cursor:pointer;">
+                    Send
+                </button>
+            </div>
+        </div>
+        <!-- ========== END CHATBOT ========== -->
+
         <div class="history-section" id="historySection">
             <div class="divider"></div>
             <h2>Saved Sessions</h2>
@@ -216,7 +260,10 @@
             <div id="historyList" class="history-list"></div>
 
             <div id="historyDetails">
-                <h4>Selected Session</h4>
+                <div class="history-header">
+                    <h4>Selected Session</h4>
+                    <button id="closeHistoryDetails" class="close-btn">✖</button>
+                </div>
                 <ul id="historyMetadata"></ul>
                 <h5>Summary</h5>
                 <div id="historySummary" style="white-space: pre-wrap; background:#fff; padding:10px; border-radius:6px; border:1px solid #e3e6ea;"></div>
@@ -297,7 +344,7 @@
 
         function updateProgress(percent, text) {
             progressFill.style.width = percent + '%';
-            progressFill.textContent = Math.round(percent) + '%';
+            document.getElementById("progressTextPercent").textContent = Math.round(percent) + "%";
             progressText.textContent = text;
         }
 
@@ -758,6 +805,7 @@
                     setTimeout(() => {
                         hideProgress();
                         summaryElement.textContent = data.summary;
+                        window.currentDocId = data.id || data.doc_id || null;
                         downloadLink.href = data.download_url;
                         downloadLink.download = filename || 'recording.webm';
                         resultsElement.style.display = 'block';
@@ -780,6 +828,7 @@
                         }
 
                         loadHistory(false);
+                        showChatbot();
                     }, 500);
                 })
                 .catch(error => {
@@ -936,6 +985,7 @@
             resetTTSPlayer();
             updateTTSAvailability();
             window.scrollTo({ top: resultsElement.offsetTop - 20, behavior: 'smooth' });
+            showChatbot();
         });
 
         function renderHistoryList(items) {
@@ -951,9 +1001,34 @@
                 const card = document.createElement('div');
                 card.className = 'history-card';
 
+                const headerRow = document.createElement('div');
+                headerRow.style.display = "flex";
+                headerRow.style.justifyContent = "space-between";
+                headerRow.style.alignItems = "center";
+
                 const title = document.createElement('h4');
                 title.textContent = (item.metadata && item.metadata.topic) || 'Untitled Session';
-                card.appendChild(title);
+
+                const deleteBtn = document.createElement('button');
+                deleteBtn.textContent = "✖";
+                deleteBtn.style.background = "#dc3545";
+                deleteBtn.style.color = "white";
+                deleteBtn.style.border = "none";
+                deleteBtn.style.padding = "4px 10px";
+                deleteBtn.style.borderRadius = "5px";
+                deleteBtn.style.cursor = "pointer";
+                deleteBtn.style.fontSize = "14px";
+
+                deleteBtn.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    if (confirm("Delete this record permanently?")) {
+                        deleteHistoryItem(item.id);
+                    }
+                });
+
+                headerRow.appendChild(title);
+                headerRow.appendChild(deleteBtn);
+                card.appendChild(headerRow);
 
                 const timestamp = document.createElement('small');
                 const rawTimestamp = item.metadata && item.metadata.timestamp;
@@ -970,7 +1045,14 @@
                 const button = document.createElement('button');
                 button.type = 'button';
                 button.textContent = 'View details';
-                button.addEventListener('click', () => showHistoryDetails(item.id));
+                button.addEventListener('click', () => {
+                    showHistoryDetails(item.id);
+
+                    // Auto scroll to details
+                    setTimeout(() => {
+                        historyDetails.scrollIntoView({ behavior: "smooth", block: "start" });
+                    }, 150);
+                });
                 card.appendChild(button);
 
                 historyList.appendChild(card);
@@ -1040,9 +1122,102 @@
             }
         }
 
-        resetTTSPlayer();
-        updateTTSAvailability();
-        loadHistory();
+        document.getElementById("closeHistoryDetails").addEventListener("click", () => {
+            historyDetails.style.display = "none";
+            selectedHistoryId = null;
+            window.scrollTo({ top: historySection.offsetTop, behavior: "smooth" });
+        });
+
+        window.addEventListener("DOMContentLoaded", () => {
+            resetTTSPlayer();
+            updateTTSAvailability();
+            loadHistory();
+        });
     </script>
+
+    <!-- ================= CHATBOT SCRIPT ================= -->
+    <script>
+        const chatCard = document.getElementById("chatbotCard");
+        const chatWin = document.getElementById("chatWindow");
+        const chatInput = document.getElementById("chatInput");
+        const chatSend = document.getElementById("chatSendBtn");
+
+        function showChatbot() {
+            chatCard.style.display = 'block';
+            chatWindow.innerHTML = ""; 
+            chatInput.value = "";
+        }
+
+        function addChatMessage(role, text) {
+            const div = document.createElement("div");
+            div.style.marginBottom = "8px";
+
+            if (role === "user") {
+                div.innerHTML = `<div style="text-align:right;">
+                    <span style="background:#007bff; color:white; padding:5px 10px; border-radius:10px;">${text}</span>
+                </div>`;
+            } else {
+                div.innerHTML = `<div style="text-align:left;">
+                    <span style="background:#e1e1e1; padding:5px 10px; border-radius:10px;">${text}</span>
+                </div>`;
+            }
+
+            chatWin.appendChild(div);
+            chatWin.scrollTop = chatWin.scrollHeight;
+        }
+
+        async function sendChatMessage() {
+            const q = chatInput.value.trim();
+            if (!q) return;
+
+            addChatMessage("user", q);
+            chatInput.value = "";
+
+            addChatMessage("assistant", "...thinking...");
+
+            const res = await fetch("/api/chat", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    question: q,
+                    doc_id: window.currentDocId || null 
+                })
+            });
+
+            const data = await res.json();
+
+            // remove "thinking"
+            chatWin.removeChild(chatWin.lastChild);
+
+            if (data.answer) {
+                addChatMessage("assistant", data.answer);
+            } else {
+                addChatMessage("assistant", "❌ Error: Could not get response.");
+            }
+        }
+
+        chatSend.addEventListener("click", sendChatMessage);
+        chatInput.addEventListener("keydown", (e) => {
+            if (e.key === "Enter") sendChatMessage();
+        });
+
+    async function deleteHistoryItem(id) {
+        try {
+            const res = await fetch(`/api/transcript/${id}`, { method: "DELETE" });
+            const data = await res.json();
+
+            if (data.success) {
+                alert("Deleted successfully!");
+                loadHistory();
+                historyDetails.style.display = "none";
+            } else {
+                alert("Delete failed: " + (data.error || "Unknown error"));
+            }
+        } catch (err) {
+            alert("Delete failed: " + err.message);
+        }
+    }
+    </script>
+    <!-- ================= END CHATBOT SCRIPT ================= -->
 </body>
 </html>

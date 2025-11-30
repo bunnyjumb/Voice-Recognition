@@ -13,6 +13,11 @@ OPENAI_API_KEY = "sk-6gH161QwRXLB0FmOCwxglA"
 OPENAI_MODEL_TRANSCRIPTION = "whisper-1"
 OPENAI_MODEL_SUMMARY = "GPT-5-mini"
 
+# EMBEDDING API
+EMBEDDING_BASE_URL = "https://aiportalapi.stu-platform.live/jpe"
+EMBEDDING_API_KEY = "sk-c6WKFFVK8oH9hYZmm1eMnA"   # thay key vào đây
+EMBEDDING_MODEL = "text-embedding-3-small"
+
 # File Upload Configuration
 UPLOAD_FOLDER = 'uploads'
 MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
@@ -22,6 +27,19 @@ MAX_FILE_SIZE = 100 * 1024 * 1024  # 100MB
 # This ensures we stay well within model context limits
 MAX_CHARS_PER_CHUNK = 2000
 CHUNK_OVERLAP = 200  # Overlap between chunks to maintain context
+
+# ============================================
+# RAG / Azure OpenAI + Pinecone Configuration
+# ============================================
+AZURE_OPENAI_ENDPOINT = "" 
+AZURE_OPENAI_API_KEY = "" 
+AZURE_EMBEDDING_DEPLOYMENT = "text-embedding-3-small"
+AZURE_CHAT_DEPLOYMENT = "gpt-4o-mini"
+
+PINECONE_API_KEY = "pcsk_4yUBYx_PNUPcpWfYEV8pxWokyMzUKgrFS4w4QuBbXY7NjELz6aGWmYRHAhtYQgd7vjig44"
+PINECONE_INDEX_NAME = "meeting-summaries-index"
+PINECONE_CLOUD = "aws"
+PINECONE_REGION = "us-east-1"
 
 # Language Mapping for Whisper API
 LANGUAGE_MAP = {

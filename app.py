@@ -18,6 +18,9 @@ from services.chromadb_service import ChromaDBService
 from services.tts_service import TTSService
 from utils.ffmpeg_checker import get_ffmpeg_checker
 
+from services.pinecone_service import PineconeService
+from services.rag_service import RAGService
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -230,6 +233,27 @@ def process_audio():
             )
             if transcript_id:
                 logger.info(f"✓ Transcript stored in ChromaDB with ID: {transcript_id}")
+                if pinecone_service.is_available():
+                    try:
+                        pinecone_service.upsert(
+                            doc_id=transcript_id,
+                            transcript=transcript,
+                            summary=summary,
+                            metadata={
+                                "topic": topic,
+                                "language": language,
+                                "filename": filename,
+                            },
+                        )
+                        logger.info("✓ Transcript also indexed in Pinecone")
+                    except Exception as e:
+                        logger.warning(
+                            f"Failed to upsert transcript into Pinecone (non-critical): {e}"
+                        )
+                else:
+                    logger.warning(
+                        "PineconeService not available, skipping Pinecone upsert"
+                    )
             else:
                 logger.warning("ChromaDB storage failed or not available")
         except Exception as e:
@@ -462,6 +486,85 @@ def signal_handler(sig, frame):
     logger.info("\nShutting down gracefully...")
     sys.exit(0)
 
+pinecone_service = PineconeService()
+rag_service = RAGService()
+
+if pinecone_service.is_available():
+    logger.info("PineconeService initialized (Pinecone vector store)")
+else:
+    logger.warning("PineconeService not available")
+
+if rag_service.is_available():
+    logger.info("RAGService initialized (LangChain + Pinecone)")
+else:
+    logger.warning("RAGService not available")
+
+
+@app.route("/api/chat", methods=["POST"])
+def chat_global():
+    data = request.get_json() or {}
+    question = (data.get("question") or "").strip()
+    doc_id = (data.get("doc_id") or "").strip()
+
+    if not question:
+        return jsonify({"error": "question required"}), 400
+
+    if not rag_service.is_available():
+        return jsonify({"error": "RAG not initialized"}), 503
+
+    result = rag_service.ask_with_priority(question, doc_id)
+
+    if not result or not result.get("result"):
+        return jsonify({"error": "No answer found"}), 200
+
+    sources = []
+    for doc in result.get("source_documents", []):
+        metadata = getattr(doc, "metadata", {}) or {}
+        sources.append(
+            {
+                "filename": metadata.get("filename"),
+                "topic": metadata.get("topic"),
+            }
+        )
+
+    return jsonify(
+        {
+            "answer": result["result"],
+            "sources": sources,
+        }
+    )
+
+@app.route("/api/transcript/<doc_id>", methods=["DELETE"])
+def delete_transcript(doc_id):
+    try:
+        record = chromadb_service.get_transcript(doc_id)
+        if not record:
+            return jsonify({"success": False, "error": "Record not found"}), 404
+
+        metadata = record.get("metadata", {})
+        filename = metadata.get("filename")
+        if filename:
+            import os
+            audio_path = os.path.join(UPLOAD_FOLDER, filename)
+            if os.path.exists(audio_path):
+                os.remove(audio_path)
+
+        try:
+            chromadb_service.collection.delete(ids=[doc_id])
+        except Exception as e:
+            print("Error deleting from ChromaDB:", e)
+
+        try:
+            pinecone_service.index.delete(ids=[doc_id])
+        except:
+            pass 
+
+        return jsonify({"success": True})
+
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(e)}), 500
 
 if __name__ == '__main__':
     # Register signal handlers for graceful shutdown (if supported)
