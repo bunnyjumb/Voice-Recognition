@@ -181,7 +181,7 @@ class ChromaDBService:
         query_text: Optional[str] = None,
         topic: Optional[str] = None,
         language: Optional[str] = None,
-        limit: int = 10
+        limit: Optional[int] = None
     ) -> List[Dict[str, Any]]:
         """
         Query transcripts by text, topic, or language.
@@ -190,23 +190,24 @@ class ChromaDBService:
             query_text: Text to search for
             topic: Filter by topic
             language: Filter by language
-            limit: Maximum number of results
+            limit: Maximum number of results (None để lấy tất cả)
 
         Returns:
-            List of matching transcripts
+            List of matching transcripts sorted by relevance (if available)
         """
         if not self.is_available():
             return []
 
         try:
+            results = {}
             if query_text:
-                # Semantic search
+                # Nếu limit là None thì lấy tất cả, còn không thì lấy theo limit
                 results = self.collection.query(
                     query_texts=[query_text],
                     n_results=limit
                 )
             else:
-                # Get all documents (with filters if specified)
+                # Build filters
                 where = {}
                 if topic:
                     where["topic"] = topic
@@ -221,27 +222,37 @@ class ChromaDBService:
                 else:
                     results = self.collection.get(limit=limit)
 
-            # Format results
             formatted_results = []
-            if results['ids']:
-                for i, doc_id in enumerate(results['ids']):
-                    document_text = results['documents'][i]
-                    metadata = results['metadatas'][i]
+            # Sắp xếp kết quả nếu có trường 'distances' hoặc 'scores'
+            indices = list(range(len(results.get('ids', []))))
+            if results.get('distances'):
+                indices.sort(key=lambda i: results['distances'][i])
+            elif results.get('scores'):
+                indices.sort(key=lambda i: -results['scores'][i])
 
-                    # Ensure document_text is a string
-                    if isinstance(document_text, list):
-                        document_text = document_text[0]
+            for i in indices:
+                doc_id = results['ids'][i]
+                document_text = results['documents'][i]
+                metadata = results['metadatas'][i]
 
-                    parts = document_text.split("\n\nSummary:\n")
-                    transcript = parts[0].replace("Transcript:\n", "").strip()
-                    summary = parts[1].strip() if len(parts) > 1 else ""
+                # Đảm bảo document_text là string
+                if isinstance(document_text, list):
+                    document_text = document_text[0]
 
-                    formatted_results.append({
-                        "id": doc_id,
-                        "transcript": transcript,
-                        "summary": summary,
-                        "metadata": metadata
-                    })
+                parts = document_text.split("\n\nSummary:\n", 1)
+                transcript = parts[0].replace("Transcript:\n", "").strip()
+                summary = parts[1].strip() if len(parts) > 1 else ""
+
+                formatted_results.append({
+                    "id": doc_id,
+                    "transcript": transcript,
+                    "summary": summary,
+                    "metadata": metadata
+                })
+
+            print("-------------TEST------------------------------------------------------------")
+            print("formatted_results", len(formatted_results))
+            print("-------------TEST---END------------------------------------------------------")
 
             return formatted_results
 

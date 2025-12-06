@@ -445,7 +445,7 @@ def list_transcripts():
         limit = int(request.args.get('limit', 10))
     except ValueError:
         limit = 10
-    limit = max(1, min(limit, 50))
+    limit = max(limit, 50)
 
     results = chromadb_service.query_transcripts(
         query_text=query,
