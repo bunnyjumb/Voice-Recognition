@@ -86,15 +86,15 @@ class PromptBuilder:
 
 MEETING TOPIC/CONTEXT: {topic}
 
-CRITICAL INSTRUCTIONS:
+1. Status of current tasks
+2. Any issues
+3. Planned tasks, assignees, and deadlines (if any)
+
 - Write the summary in {language_name}
-- Preserve ALL technical terms, jargon, and domain-specific vocabulary exactly as they appear
+- Preserve all technical terms, proper nouns, company names, and product names exactly as they appear
 - Do NOT translate technical terms, proper nouns, company names, or product names
 - Maintain the original terminology even if it's in a different language
-- Focus on key decisions, action items, important discussions, and outcomes
-- Structure the summary clearly with main points and sub-points
-- Include any deadlines, responsibilities, or next steps mentioned
-- Use the meeting topic/context to provide better understanding and relevance
+- IMPORTANT: Summary as short as possible while retaining all critical information
 
 Meeting Transcript:
 ---

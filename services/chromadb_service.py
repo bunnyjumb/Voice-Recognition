@@ -185,19 +185,19 @@ class ChromaDBService:
     ) -> List[Dict[str, Any]]:
         """
         Query transcripts by text, topic, or language.
-        
+
         Args:
             query_text: Text to search for
             topic: Filter by topic
             language: Filter by language
             limit: Maximum number of results
-            
+
         Returns:
             List of matching transcripts
         """
         if not self.is_available():
             return []
-        
+
         try:
             if query_text:
                 # Semantic search
@@ -212,7 +212,7 @@ class ChromaDBService:
                     where["topic"] = topic
                 if language:
                     where["language"] = language
-                
+
                 if where:
                     results = self.collection.get(
                         where=where,
@@ -220,28 +220,31 @@ class ChromaDBService:
                     )
                 else:
                     results = self.collection.get(limit=limit)
-            
+
             # Format results
             formatted_results = []
             if results['ids']:
                 for i, doc_id in enumerate(results['ids']):
                     document_text = results['documents'][i]
                     metadata = results['metadatas'][i]
-                    
-                    # Parse document
+
+                    # Ensure document_text is a string
+                    if isinstance(document_text, list):
+                        document_text = document_text[0]
+
                     parts = document_text.split("\n\nSummary:\n")
                     transcript = parts[0].replace("Transcript:\n", "").strip()
                     summary = parts[1].strip() if len(parts) > 1 else ""
-                    
+
                     formatted_results.append({
                         "id": doc_id,
                         "transcript": transcript,
                         "summary": summary,
                         "metadata": metadata
                     })
-            
+
             return formatted_results
-            
+
         except Exception as e:
             logger.error(f"Failed to query transcripts from ChromaDB: {e}")
             return []

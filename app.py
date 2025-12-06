@@ -174,6 +174,9 @@ def process_audio():
                 audio_file_path=filepath,
                 language=language if language != 'other' else None
             )
+            print("-------------TEST------------------------------------------------------------")
+            print(transcript)
+            print("-------------TEST---END------------------------------------------------------")
             transcript_duration = (datetime.now() - transcript_start).total_seconds()
             logger.info(f"✓ Transcription completed in {transcript_duration:.2f} seconds")
             logger.info(f"  Transcript length: {len(transcript)} characters")
@@ -453,7 +456,10 @@ def list_transcripts():
 
     for item in results:
         metadata = item.get("metadata") or {}
-        filename = metadata.get("filename")
+        # Nếu metadata là list, lấy phần tử đầu tiên
+        if isinstance(metadata, list) and metadata:
+            metadata = metadata[0]
+        filename = metadata.get("filename") if isinstance(metadata, dict) else None
         if filename:
             item["audio_url"] = f"/uploads/{filename}"
 
