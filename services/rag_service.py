@@ -30,6 +30,9 @@ class RAGService:
         self.available = False
         self.pipeline = None
         self.retriever = None
+        # Track per-doc lightweight state so follow-up prompts ("next") stay scoped
+        # and avoid mixing conversations across documents/users.
+        self._history = {}
 
         try:
             # 1. Embeddings
@@ -113,56 +116,87 @@ Answer in the same language as the question.
         }
 
     def ask_with_priority(self, question: str, doc_id: str):
-            if not self.available:
-                return None
+        if not self.available:
+            return None
 
-            docs = []
-            
-            if doc_id:
-                try:
-                    docs = self.retriever.vectorstore.similarity_search(
-                        question,
-                        k=3,
-                        filter={"doc_id": doc_id}
-                    )
-                except:
-                    pass
+        normalized = (question or "").strip()
+        lower_q = normalized.lower()
+        is_followup = lower_q in {"next", "tiếp theo", "tiep theo", "tiếp", "tiep"}
 
-            if not docs:
-                try:
-                    docs = self.retriever.invoke(question)
-                except:
-                    docs = []
+        # Scope history by document id to avoid mixing users/sessions
+        history_key = (doc_id or "").strip() or "__global__"
+        state = self._history.setdefault(history_key, {"q": None, "a": None})
 
-            context_text = "\n\n".join([d.page_content for d in docs]) or "No context available."
+        if is_followup and not state["q"]:
+            return {
+                "result": "Chưa có câu hỏi trước đó để tiếp tục. Vui lòng đặt câu hỏi cụ thể.",
+                "source_documents": [],
+            }
 
-            prompt = f"""
+        # When user asks for "next", reuse previous question/doc to keep context
+        effective_question = state["q"] if is_followup else normalized
+        effective_doc_id = doc_id or history_key if history_key != "__global__" else ""
+
+        docs = []
+        
+        if effective_doc_id:
+            try:
+                docs = self.retriever.vectorstore.similarity_search(
+                    effective_question,
+                    k=3,
+                    filter={"doc_id": effective_doc_id}
+                )
+            except:
+                pass
+
+        if not docs:
+            try:
+                docs = self.retriever.invoke(effective_question)
+            except:
+                docs = []
+
+        context_text = "\n\n".join([d.page_content for d in docs]) or "No context available."
+
+        followup_note = ""
+        if is_followup and state["a"]:
+            followup_note = (
+                "\nPrevious answer (do not repeat, extend instead):\n"
+                f"{state['a']}\n"
+            )
+
+        prompt = f"""
         You are a helpful assistant.
         Use ONLY the following context to answer the question.
         If answer not found, say: "I cannot find the answer."
+        If this is a follow-up request like 'next', continue the previous answer with new details and avoid repetition.
 
         Context:
         {context_text}
+        {followup_note}
 
         Question:
-        {question}
+        {effective_question}
 
         Answer:
         """
 
-            llm = ChatOpenAI(
-                model=OPENAI_MODEL_SUMMARY,
-                api_key=OPENAI_API_KEY,
-                base_url=OPENAI_BASE_URL,
-                temperature=0.2,
-            )
+        llm = ChatOpenAI(
+            model=OPENAI_MODEL_SUMMARY,
+            openai_api_key=OPENAI_API_KEY,
+            openai_api_base=OPENAI_BASE_URL,
+            temperature=0.2,
+        )
 
-            answer = llm.invoke(prompt).content
+        answer = llm.invoke(prompt).content
 
-            return {
-                "result": answer,
-                "source_documents": docs
-            }
+        # Persist lightweight state for subsequent follow-up turns
+        state["q"] = effective_question
+        state["a"] = answer
+
+        return {
+            "result": answer,
+            "source_documents": docs
+        }
 
 
         

@@ -235,9 +235,13 @@ class ChromaDBService:
                 document_text = results['documents'][i]
                 metadata = results['metadatas'][i]
 
-                # Đảm bảo document_text là string
+                # Normalize shapes
                 if isinstance(document_text, list):
                     document_text = document_text[0]
+                if isinstance(metadata, list):
+                    metadata = metadata[0] if metadata else {}
+                if not isinstance(metadata, dict):
+                    metadata = {}
 
                 parts = document_text.split("\n\nSummary:\n", 1)
                 transcript = parts[0].replace("Transcript:\n", "").strip()

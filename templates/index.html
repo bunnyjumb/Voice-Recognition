@@ -326,6 +326,13 @@
         let currentSummary = '';
         let currentLanguage = '';
         let currentCustomLanguage = '';
+        // Expose summary state globally for other script blocks (chatbot)
+        window.currentSummary = currentSummary;
+
+        function setCurrentSummary(val) {
+            currentSummary = val || '';
+            window.currentSummary = currentSummary;
+        }
         let ffmpegAvailable = null;
         let segmentPlaybackActive = false;
         let segmentEndBoundary = 0;
@@ -813,7 +820,7 @@
                         statusElement.classList.remove('error');
                         statusElement.classList.add('success');
 
-                        currentSummary = data.summary;
+                        setCurrentSummary(data.summary);
                         currentLanguage = data.language || languageSelect.value;
                         currentCustomLanguage = data.custom_language || '';
                         resetTTSPlayer();
@@ -976,7 +983,7 @@
 
             summaryElement.textContent = item.summary;
             resultsElement.style.display = 'block';
-            currentSummary = item.summary;
+            setCurrentSummary(item.summary);
             currentLanguage = (item.metadata && item.metadata.language) || languageSelect.value || 'en';
             currentCustomLanguage = (item.metadata && item.metadata.custom_language) || '';
             statusElement.textContent = 'Summary loaded from history. You can generate fresh TTS audio now.';
@@ -1142,10 +1149,24 @@
         const chatInput = document.getElementById("chatInput");
         const chatSend = document.getElementById("chatSendBtn");
 
+        function isChatReady() {
+            const summary = (window.currentSummary || '').trim();
+            return summary.length > 0;
+        }
+
+        function updateChatSendState() {
+            const hasText = chatInput.value.trim().length > 0;
+            const enabled = hasText && isChatReady();
+            chatSend.disabled = !enabled;
+            chatSend.style.opacity = enabled ? "1" : "0.6";
+            chatSend.style.cursor = enabled ? "pointer" : "not-allowed";
+        }
+
         function showChatbot() {
             chatCard.style.display = 'block';
             chatWindow.innerHTML = ""; 
             chatInput.value = "";
+            updateChatSendState();
         }
 
         function addChatMessage(role, text) {
@@ -1168,10 +1189,13 @@
 
         async function sendChatMessage() {
             const q = chatInput.value.trim();
-            if (!q) return;
+            if (!q || !isChatReady()) {
+                return;
+            }
 
             addChatMessage("user", q);
             chatInput.value = "";
+            updateChatSendState();
 
             addChatMessage("assistant", "...thinking...");
 
@@ -1197,6 +1221,7 @@
         }
 
         chatSend.addEventListener("click", sendChatMessage);
+        chatInput.addEventListener("input", updateChatSendState);
         chatInput.addEventListener("keydown", (e) => {
             if (e.key === "Enter") sendChatMessage();
         });

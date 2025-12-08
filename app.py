@@ -445,7 +445,8 @@ def list_transcripts():
         limit = int(request.args.get('limit', 10))
     except ValueError:
         limit = 10
-    limit = max(limit, 50)
+    # cap to avoid accidental huge pulls
+    limit = min(max(limit, 1), 50)
 
     results = chromadb_service.query_transcripts(
         query_text=query,
@@ -456,10 +457,14 @@ def list_transcripts():
 
     for item in results:
         metadata = item.get("metadata") or {}
-        # Nếu metadata là list, lấy phần tử đầu tiên
-        if isinstance(metadata, list) and metadata:
-            metadata = metadata[0]
-        filename = metadata.get("filename") if isinstance(metadata, dict) else None
+        # Normalize metadata shape
+        if isinstance(metadata, list):
+            metadata = metadata[0] if metadata else {}
+        if not isinstance(metadata, dict):
+            metadata = {}
+        item["metadata"] = metadata
+
+        filename = metadata.get("filename")
         if filename:
             item["audio_url"] = f"/uploads/{filename}"
 
